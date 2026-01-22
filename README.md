@@ -4,9 +4,9 @@
 This is the official code for paper: RayRoPE: Projective Ray Positional Encoding for Multi-view Attention.
 
 ## ToDos
-- [] More detailed instruction on using thie repo coming soon.
-- [] Instruction on donwloading datasets
-- [] Release code for stereo depth experiments
+- More detailed instruction on using thie repo coming soon.
+- Instruction on donwloading datasets
+- Release code for stereo depth experiments
 
 
 ## Setup
