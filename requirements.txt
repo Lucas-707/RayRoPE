@@ -1,0 +1,24 @@
+--find-links https://download.pytorch.org/whl/cu124
+torch==2.5.1
+torchvision==0.20.1
+
+pyyaml
+tyro
+einops
+tqdm
+tensorboard
+numpy<2.0.0
+opencv-python
+imageio[ffmpeg]
+torchmetrics[image]
+
+# for scripts/*.ipynb
+ipykernel
+matplotlib
+pandas
+tabulate
+
+# dev
+black
+isort
+pytest
