@@ -1,7 +1,15 @@
-# RayRoPE
+<p align="center">
+  <img src="./assets/visual/rayrope_logo.png" height="80" />
+  <img src="./assets/visual/rayrope_title.png" height="80" />
+</p>
+
 [Project Page](https://rayrope.github.io/) | [arXiv](https://arxiv.org/abs/2601.15275v1)
 
 This is the official code for paper: RayRoPE: Projective Ray Positional Encoding for Multi-view Attention.
+
+<p align="center">
+  <img src="./assets/visual/method_fig_new.png" width="800" />
+</p>
 
 ## ToDos
 - More detailed instruction on using thie repo coming soon.
