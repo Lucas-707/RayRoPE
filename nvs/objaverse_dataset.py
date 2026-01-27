@@ -11,7 +11,7 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import Dataset
 
-from .dataset import resize_crop_with_subpixel_accuracy
+from .re10k_dataset import resize_crop_with_subpixel_accuracy
 
 def scale_down_extrinsics(c2w: np.ndarray, scale: float = 0.02) -> np.ndarray:
     # Scale down the camera with respect the world origin
@@ -19,7 +19,13 @@ def scale_down_extrinsics(c2w: np.ndarray, scale: float = 0.02) -> np.ndarray:
     c2w_scaled[:3, 3] *= scale
     return c2w_scaled
 
-def normalize_poses(c2w: np.ndarray, max_radius: float) -> np.ndarray:
+def normalize_view1_to_identity(c2ws: np.ndarray) -> np.ndarray:
+    ref0_c2w = c2ws[0]
+    c2ws_out = np.einsum("ij, vjk -> vik", np.linalg.inv(ref0_c2w), c2ws)
+    return c2ws_out
+
+
+def get_normalize_scale(c2w: np.ndarray, max_radius: float) -> np.ndarray:
     """Normalize camera-to-world matrices by scaling so max camera center distance equals max_radius.
     """
     # For c2w, camera center in world coords is just the translation: c2w[:, :3, 3]
@@ -32,11 +38,7 @@ def normalize_poses(c2w: np.ndarray, max_radius: float) -> np.ndarray:
         scale = max_radius / max_distance
     else:
         scale = 1.0
-    # Scale the c2w matrices (only the translation part)
-    c2w_normalized = c2w.copy()
-    c2w_normalized[:, :3, 3] *= scale
-    
-    return c2w_normalized, scale
+    return scale
 
 def load_objaverse_cameras(cameras_json_path: str) -> Dict[str, Any]:
     """Load camera information from Objaverse cameras.json file."""
@@ -72,6 +74,13 @@ def parse_objaverse_camera(camera_info: Dict) -> Tuple[np.ndarray, np.ndarray]:
     blender2opencv = np.array(
         [[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]]
     )
+
+    # c2w_blender = np.array(extrinsics["camera_to_world"], dtype=np.float32)
+    # R_blender = c2w_blender[:3, :3]
+    # t_blender = c2w_blender[:3, 3:4]
+    # R_opencv = R_blender @ blender2opencv[:3, :3]
+    # c2w_3by4 = np.concatenate([R_opencv, t_blender], axis=1)
+
     c2w_3by4 = np.array(extrinsics["camera_to_world"], dtype=np.float32) @ blender2opencv
     
     # Construct camera-to-world matrix
@@ -82,12 +91,14 @@ def parse_objaverse_camera(camera_info: Dict) -> Tuple[np.ndarray, np.ndarray]:
 
 
 def load_objaverse_frames(
-    data_dir: str,
+    views_dir: str,
     cameras_data: Dict[str, Any],
     frame_ids: List[int],
     depth_ids: Optional[List[int]] = None,
     patch_size: int = 256,
     camera_pose_only: bool = False,
+    normalize_ids: Optional[List[int]] = None,
+    normalize_scale: Optional[float] = None,
 ) -> Union[Dict[str, Any], np.ndarray]:
     """Load frames from Objaverse dataset.
     
@@ -97,15 +108,26 @@ def load_objaverse_frames(
         frame_ids: List of frame indices to load
         patch_size: Target image size (images will be resized to patch_size x patch_size)
         camera_pose_only: If True, only return camera poses
+        normalize_ids: View indices used to estimate the global normalization scale.
+            When None, falls back to the provided frame_ids.
         
     Returns:
         Dictionary with images, K matrices, camera poses, and image paths
         or just camera poses if camera_pose_only=True
     """
-    blender2opencv = np.array(
-        [[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]]
-    )
     cameras = cameras_data["cameras"]
+
+    if normalize_scale is None:
+        if normalize_ids is None:
+            normalize_ids = frame_ids
+        if len(normalize_ids) > 1:
+            normalize_ids = list(dict.fromkeys(normalize_ids))
+
+        normalize_c2ws = np.stack([
+            parse_objaverse_camera(cameras[norm_id])[1]
+            for norm_id in normalize_ids
+        ])
+        normalize_scale = get_normalize_scale(normalize_c2ws, max_radius=0.5)
     
     # Shortcut for loading only camera poses
     if camera_pose_only:
@@ -113,12 +135,14 @@ def load_objaverse_frames(
         for frame_id in frame_ids:
             camera_info = cameras[frame_id]
             _, c2w = parse_objaverse_camera(camera_info)
-            c2ws.append(c2w)
+            c2w_scaled = c2w.copy()
+            c2w_scaled[:3, 3] *= normalize_scale
+            c2ws.append(c2w_scaled)
         return np.stack(c2ws)
     
     # Load images and camera parameters
     images, Ks, c2ws, abs_image_paths = [], [], [], []
-    views_dir = os.path.join(data_dir, "views")
+    # views_dir = os.path.join(data_dir, "views")
     
     for frame_id in frame_ids:
         camera_info = cameras[frame_id]
@@ -139,9 +163,16 @@ def load_objaverse_frames(
         c2ws.append(c2w)
         abs_image_paths.append(abs_image_path)
 
-    # normalize the extrinsics
+    # normalize the extrinsics using the precomputed scale
     c2ws = np.stack(c2ws)
-    c2ws, normalize_scale = normalize_poses(c2ws, max_radius=0.5)
+    c2ws[:, :3, 3] *= normalize_scale
+    # c2ws = normalize_view1_to_identity(c2ws)
+
+    # Compute foreground mask: 1 for foreground, 0 for background (pure white)
+    stacked_images = np.stack(images)
+    white_threshold = 250
+    is_white = np.all(stacked_images >= white_threshold, axis=-1)  # (N, H, W)
+    masks = (~is_white).astype(np.float32)[..., None]  # (N, H, W, 1), 1 for foreground
 
     if depth_ids:
         depths = []
@@ -159,11 +190,13 @@ def load_objaverse_frames(
             depths.append(depth)
     
     return {
-        "image": np.stack(images),
+        "image": stacked_images,
+        "mask": masks,
         "depth" : np.stack(depths) if depth_ids else None,
         "K": np.stack(Ks),
         "camtoworld": np.stack(c2ws),
         "image_path": abs_image_paths,
+        "normalize_scale": normalize_scale,
     }
 
 
@@ -178,6 +211,7 @@ class ObjaverseTrainDataset(Dataset):
         input_views: int = 2,
         supervise_views: int = 6,
         get_depth: bool = False,
+        get_mask: bool = False,
     ):
         """
         Args:
@@ -191,6 +225,7 @@ class ObjaverseTrainDataset(Dataset):
         self.input_views = input_views
         self.supervise_views = supervise_views
         self.get_depth = get_depth
+        self.get_mask = get_mask
 
         # Load index file
         with open(index_file, "r") as f:
@@ -208,7 +243,7 @@ class ObjaverseTrainDataset(Dataset):
     def __len__(self) -> int:
         return len(self.valid_scenes)
     
-    def __getitem__(self, idx: int) -> Dict[str, Any]:
+    def __getitem__(self, idx: int) -> Dict[str, Any]:        
         scene_path = self.valid_scenes[idx]
         object_uid = os.path.basename(scene_path)
         
@@ -234,19 +269,21 @@ class ObjaverseTrainDataset(Dataset):
         assert len(context_view_ids) == self.input_views
         
         # Get target view IDs (only use first supervise_views for training)
-        target_view_ids = [file_to_view_id[fname] for fname in target_files]
-        assert len(target_view_ids) >= self.supervise_views
-        target_view_ids = random.sample(target_view_ids, self.supervise_views)
+        all_target_view_ids = [file_to_view_id[fname] for fname in target_files]
+        assert len(all_target_view_ids) >= self.supervise_views
+        target_view_ids = random.sample(all_target_view_ids, self.supervise_views)
         # Combine context and target views
         all_view_ids = context_view_ids + target_view_ids
+        normalize_ids = context_view_ids + all_target_view_ids
         
         # Load frames
         data = load_objaverse_frames(
-            scene_path, 
+            f"{scene_path}/views", 
             cameras_data, 
             all_view_ids,
             depth_ids=context_view_ids if self.get_depth else None,
-            patch_size=self.patch_size
+            patch_size=self.patch_size,
+            normalize_ids=normalize_ids,
         )
         
         # Convert to torch tensors and normalize poses (same as RE10K dataset)
@@ -254,17 +291,20 @@ class ObjaverseTrainDataset(Dataset):
         K = torch.from_numpy(data["K"]).float()
         image = torch.from_numpy(data["image"]).float()
         image_path = data["image_path"]
-        context_depths = torch.from_numpy(data["depth"]).float() if self.get_depth else []
-        # context_depths[context_depths > 1000.0] = torch.inf
         
-        return {
+        results = {
             "camtoworld": camtoworld,
             "K": K,
             "image": image,
-            "context_depths": context_depths,
             "image_path": image_path,
         }
+    
+        if self.get_depth:
+            results["context_depths"] = torch.from_numpy(data["depth"]).float()
+        if self.get_mask:
+            results["mask"] = torch.from_numpy(data["mask"]).float()
 
+        return results
 
 class ObjaverseEvalDataset(Dataset):
     """Objaverse evaluation dataset."""
@@ -280,6 +320,7 @@ class ObjaverseEvalDataset(Dataset):
         rank: Optional[int] = None,
         world_size: Optional[int] = None,
         get_depth: bool = False,
+        render_video: bool = False,
     ):
         """
         Args:
@@ -297,6 +338,9 @@ class ObjaverseEvalDataset(Dataset):
         self.input_views = input_views
         # self.supervise_views = supervise_views
         self.get_depth = get_depth
+        self.render_video = render_video
+        if self.render_video:
+            assert self.input_views >= 2, "Need at least 2 input views to render video."
         
         # Load index file
         with open(index_file, "r") as f:
@@ -359,13 +403,15 @@ class ObjaverseEvalDataset(Dataset):
         # Combine context and target views
         all_view_ids = context_view_ids + target_view_ids
         
+        normalize_ids = all_view_ids + [0,3,6,9,12,15,18,21]
         # Load frames
         data = load_objaverse_frames(
-            scene_path, 
+            f"{scene_path}/views", 
             cameras_data, 
             all_view_ids, 
             depth_ids=context_view_ids if self.get_depth else None,
-            patch_size=self.patch_size
+            patch_size=self.patch_size,
+            normalize_ids=normalize_ids,
         )
         
         # Convert to torch tensors and normalize poses (same as RE10K dataset)
@@ -374,14 +420,98 @@ class ObjaverseEvalDataset(Dataset):
         image = torch.from_numpy(data["image"]).float()
         image_path = data["image_path"]
 
-        context_depths = torch.from_numpy(data["depth"]).float() if self.get_depth else []
+        if self.render_video:
+            c2w_ref = camtoworld[:self.input_views]
+            K_ref = K[:self.input_views]
+            image_ref = image[:self.input_views]
+            image_path_ref = image_path[:self.input_views]
+            
+            cameras_json_path_circ = os.path.join(scene_path, "cameras_circ_traj.json")
+            cameras_data_circ = load_objaverse_cameras(cameras_json_path_circ)
+            normalize_scale = data["normalize_scale"]
+            num_frames = 60 # hard coded
+
+            data_circ = load_objaverse_frames(
+                f"{scene_path}/circ_traj", 
+                cameras_data_circ, 
+                list(range(num_frames)), 
+                patch_size=self.patch_size,
+                normalize_scale=normalize_scale,
+            )
+
+            c2w_circ = torch.from_numpy(data_circ["camtoworld"]).float()
+            K_circ = torch.from_numpy(data_circ["K"]).float()
+            image_circ = torch.from_numpy(data_circ["image"]).float()
+            image_path_circ = data_circ["image_path"]
+
+            camtoworld = torch.cat([c2w_ref, c2w_circ], dim=0)
+            K = torch.cat([K_ref, K_circ], dim=0)
+            image = torch.cat([image_ref, image_circ], dim=0)
+            image_path = image_path_ref + image_path_circ
         
-        return {
+        results =  {
             "camtoworld": camtoworld,
             "K": K,
             "image": image,
-            "context_depths": context_depths,
             "image_path": image_path,
             "scene": idx,
         }
 
+        if self.get_depth:
+            results["context_depths"] = torch.from_numpy(data["depth"]).float()
+        return results
+
+def interpolate_camera_traj(
+    c2w_ref: torch.Tensor, 
+    K_ref: torch.Tensor, 
+    num_frames: int = 24
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    Interpolate camera trajectory from reference views using SLERP for rotation
+    and linear interpolation for translation.
+    
+    Args:
+        c2w_ref: (2, 4, 4) reference camera-to-world matrices
+        K_ref: (2, 3, 3) reference intrinsic matrices
+        num_frames: Number of interpolated frames to generate
+        
+    Returns:
+        c2w_traj: (num_frames, 4, 4) interpolated camera-to-world matrices
+        K_traj: (num_frames, 3, 3) interpolated intrinsic matrices
+    """
+    from scipy.spatial.transform import Rotation, Slerp
+    
+    # Extract rotation matrices and translations
+    R0 = c2w_ref[0, :3, :3].numpy()
+    R1 = c2w_ref[1, :3, :3].numpy()
+    t0 = c2w_ref[0, :3, 3].numpy()
+    t1 = c2w_ref[1, :3, 3].numpy()
+    
+    # Convert rotation matrices to Rotation objects for SLERP
+    rotations = Rotation.from_matrix(np.stack([R0, R1]))
+    slerp = Slerp([0, 1], rotations)
+    
+    # Generate interpolation weights
+    t_values = np.linspace(0, 1, num_frames)
+    
+    # Interpolate rotations using SLERP
+    interp_rotations = slerp(t_values)
+    interp_R = interp_rotations.as_matrix()  # (num_frames, 3, 3)
+    
+    # Linearly interpolate translations
+    interp_t = (1 - t_values[:, None]) * t0 + t_values[:, None] * t1  # (num_frames, 3)
+    
+    # Construct interpolated c2w matrices
+    c2w_traj = np.zeros((num_frames, 4, 4), dtype=np.float32)
+    c2w_traj[:, :3, :3] = interp_R
+    c2w_traj[:, :3, 3] = interp_t
+    c2w_traj[:, 3, 3] = 1.0
+    
+    # Linearly interpolate intrinsics
+    K0 = K_ref[0].numpy()
+    K1 = K_ref[1].numpy()
+    K_traj = np.zeros((num_frames, 3, 3), dtype=np.float32)
+    for i, t in enumerate(t_values):
+        K_traj[i] = (1 - t) * K0 + t * K1
+    
+    return torch.from_numpy(c2w_traj).float(), torch.from_numpy(K_traj).float()

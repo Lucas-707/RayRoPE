@@ -11,6 +11,9 @@ numpy<2.0.0
 opencv-python
 imageio[ffmpeg]
 torchmetrics[image]
+openEXR
+bpy
+submitit
 
 # for scripts/*.ipynb
 ipykernel

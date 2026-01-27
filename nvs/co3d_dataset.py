@@ -1,15 +1,8 @@
-"""CO3D dataset loaders with an Objaverse-like interface.
-
-The classes in this module mirror the structure of ``objaverse_dataset.py`` so
-that downstream code can swap datasets without large refactors. Images are
-cropped to square patches, composited on a white background, and cameras are
-normalised so the centroid is at the origin with maximum radius 0.5.
-"""
-
 from __future__ import annotations
 
 import gzip
 import json
+import os
 import os.path as osp
 import random
 import socket
@@ -29,24 +22,9 @@ import cv2
 # Environment-specific defaults
 # ---------------------------------------------------------------------------
 HOSTNAME = socket.gethostname()
-
-CO3D_DIR: Optional[str] = None
-CO3D_ANNOTATION_DIR: Optional[str] = None
-CO3D_DEPTH_DIR: Optional[str] = None
-
-if "grogu" in HOSTNAME:
-    CO3D_DIR = "/grogu/datasets/co3d"
-    CO3D_ANNOTATION_DIR = "/grogu/user/amylin2/co3d_v2_annotations"
-    CO3D_DEPTH_DIR = "/grogu/datasets/co3d"
-elif "bridges" in HOSTNAME:
-    CO3D_DIR = "/ocean/projects/cis240058p/jzhang24/co3d_v2_cropped"
-    CO3D_ANNOTATION_DIR = (
-        "/ocean/projects/cis240058p/jzhang24/co3d_v2_annotations_cropped"
-    )
-    CO3D_DEPTH_DIR = "/ocean/projects/cis240058p/jzhang24/co3d_depths"
-else:
-    warnings.warn(f"No default CO3D paths configured for host {HOSTNAME}.")
-
+CO3D_DIR: Optional[str] = os.environ["CO3D_DIR"]
+CO3D_ANNOTATION_DIR: Optional[str] = os.environ["CO3D_ANNOTATION_DIR"]
+CO3D_DEPTH_DIR: Optional[str] = os.environ["CO3D_DEPTH_DIR"]
 
 Image.MAX_IMAGE_PIXELS = None
 ImageFile.LOAD_TRUNCATED_IMAGES = True
@@ -291,36 +269,6 @@ def transform_intrinsics(
     ], dtype=np.float32)
 
     return K
-
-# def transform_intrinsics(
-#     image: Image.Image,
-#     bbox: Sequence[int],
-#     principal_point: Sequence[float],
-#     focal_length: Sequence[float],
-# ) -> Tuple[np.ndarray, np.ndarray]:
-#     half_box = np.array([image.width, image.height], dtype=np.float32) / 2.0
-#     org_scale = float(min(half_box))
-
-#     principal_point_px = half_box - (np.array(principal_point) * org_scale)
-#     focal_length_px = np.array(focal_length) * org_scale
-#     principal_point_px -= np.array(bbox[:2])
-
-#     new_bbox = (np.array(bbox[2:]) - np.array(bbox[:2])) / 2.0
-#     new_scale = float(min(new_bbox))
-
-#     new_principal_ndc = (new_bbox - principal_point_px) / new_scale
-#     new_focal_ndc = focal_length_px / new_scale
-#     return new_principal_ndc.astype(np.float32), new_focal_ndc.astype(np.float32)
-
-
-# def ndc_to_pixel_intrinsics(principal_ndc: np.ndarray, focal_ndc: np.ndarray, image_size: int) -> np.ndarray:
-#     half_size = image_size / 2.0
-#     fx = focal_ndc[0] * half_size
-#     fy = focal_ndc[1] * half_size
-#     cx = (principal_ndc[0] + 1.0) * half_size
-#     cy = (principal_ndc[1] + 1.0) * half_size
-#     return np.array([[fx, 0.0, cx], [0.0, fy, cy], [0.0, 0.0, 1.0]], dtype=np.float32)
-
 
 AXIS_P3D_TO_OPENCV = np.array(
     [[-1.0, 0.0, 0.0], [0.0, -1.0, 0.0], [0.0, 0.0, 1.0]], dtype=np.float32
@@ -1111,58 +1059,3 @@ class Co3dEvalDataset(_Co3dBaseDataset):
             #     result["depth_masks"] = torch.from_numpy(depth_masks).long()[:self.input_views].unsqueeze(-1)
 
         return result
-
-def interpolate_camera_traj(
-    c2w_ref: torch.Tensor, 
-    K_ref: torch.Tensor, 
-    num_frames: int = 24
-) -> Tuple[torch.Tensor, torch.Tensor]:
-    """
-    Interpolate camera trajectory from reference views using SLERP for rotation
-    and linear interpolation for translation.
-    
-    Args:
-        c2w_ref: (2, 4, 4) reference camera-to-world matrices
-        K_ref: (2, 3, 3) reference intrinsic matrices
-        num_frames: Number of interpolated frames to generate
-        
-    Returns:
-        c2w_traj: (num_frames, 4, 4) interpolated camera-to-world matrices
-        K_traj: (num_frames, 3, 3) interpolated intrinsic matrices
-    """
-    from scipy.spatial.transform import Rotation, Slerp
-    
-    # Extract rotation matrices and translations
-    R0 = c2w_ref[0, :3, :3].numpy()
-    R1 = c2w_ref[1, :3, :3].numpy()
-    t0 = c2w_ref[0, :3, 3].numpy()
-    t1 = c2w_ref[1, :3, 3].numpy()
-    
-    # Convert rotation matrices to Rotation objects for SLERP
-    rotations = Rotation.from_matrix(np.stack([R0, R1]))
-    slerp = Slerp([0, 1], rotations)
-    
-    # Generate interpolation weights
-    t_values = np.linspace(0, 1, num_frames)
-    
-    # Interpolate rotations using SLERP
-    interp_rotations = slerp(t_values)
-    interp_R = interp_rotations.as_matrix()  # (num_frames, 3, 3)
-    
-    # Linearly interpolate translations
-    interp_t = (1 - t_values[:, None]) * t0 + t_values[:, None] * t1  # (num_frames, 3)
-    
-    # Construct interpolated c2w matrices
-    c2w_traj = np.zeros((num_frames, 4, 4), dtype=np.float32)
-    c2w_traj[:, :3, :3] = interp_R
-    c2w_traj[:, :3, 3] = interp_t
-    c2w_traj[:, 3, 3] = 1.0
-    
-    # Linearly interpolate intrinsics
-    K0 = K_ref[0].numpy()
-    K1 = K_ref[1].numpy()
-    K_traj = np.zeros((num_frames, 3, 3), dtype=np.float32)
-    for i, t in enumerate(t_values):
-        K_traj[i] = (1 - t) * K0 + t * K1
-    
-    return torch.from_numpy(c2w_traj).float(), torch.from_numpy(K_traj).float()

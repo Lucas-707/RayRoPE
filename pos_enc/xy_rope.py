@@ -1,62 +1,9 @@
-# MIT License
-#
-# Copyright (c) Authors of
-# "Cameras as Relative Positional Encoding" https://arxiv.org/pdf/2507.10496
-#
-# Permission is hereby granted, free of charge, to any person obtaining a copy
-# of this software and associated documentation files (the "Software"), to deal
-# in the Software without restriction, including without limitation the rights
-# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-# copies of the Software, and to permit persons to whom the Software is
-# furnished to do so, subject to the following conditions:
-#
-# The above copyright notice and this permission notice shall be included in all
-# copies or substantial portions of the Software.
-#
-# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-# SOFTWARE.
-
-# How to use PRoPE attention for self-attention:
-# 
-# 1. Easiest way (fast):
-#    attn = PropeDotProductAttention(...)
-#    o = attn(q, k, v, viewmats, Ks)
-#
-# 2. More flexible way (fast):
-#    attn = PropeDotProductAttention(...)
-#    attn._precompute_and_cache_apply_fns(viewmats, Ks)
-#    q = attn._apply_to_q(q)
-#    k = attn._apply_to_kv(k)
-#    v = attn._apply_to_kv(v)
-#    o = F.scaled_dot_product_attention(q, k, v, **kwargs)
-#    o = attn._apply_to_o(o)
-# 
-# 3. The most flexible way (but slower because repeated computation of RoPE coefficients):
-#    o = prope_dot_product_attention(q, k, v, ...)
-# 
-# How to use PRoPE attention for cross-attention:
-# 
-#    attn_src = PropeDotProductAttention(...)
-#    attn_tgt = PropeDotProductAttention(...)
-#    attn_src._precompute_and_cache_apply_fns(viewmats_src, Ks_src)
-#    attn_tgt._precompute_and_cache_apply_fns(viewmats_tgt, Ks_tgt)
-#    q_src = attn_src._apply_to_q(q_src)
-#    k_tgt = attn_tgt._apply_to_kv(k_tgt)
-#    v_tgt = attn_tgt._apply_to_kv(v_tgt)
-#    o_src = F.scaled_dot_product_attention(q_src, k_tgt, v_tgt, **kwargs)
-#    o_src = attn_src._apply_to_o(o_src)
-
 from functools import partial
 from typing import Callable, Optional, Tuple, List
 
 import torch
 import torch.nn.functional as F
-from prope.timing_utils import time_block
+from pos_enc.timing_utils import time_block
 
 
 

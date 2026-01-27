@@ -17,7 +17,7 @@ from pos_enc.ray_rope_release_nosig import RayRoPE_NoSig_DotProductAttention
 from pos_enc.ray_rope_global import Global_RayRoPE_DotProductAttention
 from pos_enc.timing_utils import time_block
 
-from pos_enc.torch_official import PropeDotProductAttention
+from pos_enc.prope import PropeDotProductAttention
 from pos_enc.utils.functional import (
     Camera,
     camera_to_raymap,
@@ -78,8 +78,6 @@ class LVSMDecoderOnlyModelConfig:
     init_d: float = 0.0
     init_sig: float = 3.0
     
-    inf_qd: bool = False
-    use_invd: bool = True
     denc_type: str = "d"  # "d" or "inv_d" or "asinh_d"
     depth_input: bool = False # concat context depth map to ref input
     cam_transform_type: Literal["LDU", "none"] = "none"

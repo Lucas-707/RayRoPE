@@ -56,7 +56,7 @@ from typing import Callable, Optional, Tuple, List
 
 import torch
 import torch.nn.functional as F
-from prope.timing_utils import time_block
+from pos_enc.timing_utils import time_block
 
 
 

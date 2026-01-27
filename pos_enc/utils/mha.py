@@ -74,12 +74,6 @@ class MultiheadAttention(torch.nn.Module):
         elif predict_d == 'predict_dsig':
             self.d_proj_weight = Parameter(torch.zeros((2, embed_dim)))
             self.d_proj_bias = torch.nn.Parameter(torch.tensor([init_depth, init_sigma]))
-        elif predict_d == 'dsig_perhead':
-            nhead = self.num_heads
-            self.d_proj_weight = Parameter(torch.zeros((nhead*2, embed_dim)))
-            self.d_proj_bias = torch.nn.Parameter(
-                torch.cat([torch.full([nhead], init_depth), torch.full([nhead], init_sigma)])
-            )
         else:
             self.register_parameter("d_proj_weight", None)
             self.register_parameter("d_proj_bias", None)

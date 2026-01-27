@@ -293,7 +293,7 @@ def load_frames_from_meta_info(
     }
 
 
-class TrainDataset(Dataset):
+class RE10K_TrainDataset(Dataset):
     def __init__(
         self,
         data_dirs: List[str],
@@ -387,7 +387,7 @@ class TrainDataset(Dataset):
         }
 
 
-class EvalDataset(Dataset):
+class RE10K_EvalDataset(Dataset):
     def __init__(
         self,
         folder: str,

@@ -41,6 +41,7 @@ from pathlib import Path
 # from tqdm import tqdm
 import numpy as np
 import sys
+import argparse
 
 
 def load_metadata(metadata_path: str) -> dict:
@@ -271,16 +272,22 @@ def transform_dataset(source_dir: str, output_dir: str, split: str = "test"):
 
 
 def main():
-    # Dataset paths
-    source_dir = "/ocean/projects/cis240058p/ywu15/re10k"
-    output_dir = "/ocean/projects/cis240058p/ywu15/re10k_processed"
+    # Parse command-line arguments
+    parser = argparse.ArgumentParser(description='Transform RE10K dataset from LVSM format to PROPE format.')
+    parser.add_argument('--source_dir', type=str, required=True,
+                        help='Path to the source RE10K dataset directory')
+    parser.add_argument('--output_dir', type=str, required=True,
+                        help='Path to the output directory for processed dataset')
     
-    # Transform the train split
-    transform_dataset(source_dir, output_dir, split="train")
+    args = parser.parse_args()
+    
+    # Transform the specified split
+    transform_dataset(args.source_dir, args.output_dir, split='test')
+    transform_dataset(args.source_dir, args.output_dir, split='train')
 
     # seq_name = "33913957b62dabc4"
     # seq_name = "1ec011c8e0b341e5"
-    # process_sequence(seq_name, source_dir, output_dir, split="train")
+    # process_sequence(seq_name, args.source_dir, args.output_dir, split=args.split)
 
 
 if __name__ == "__main__":

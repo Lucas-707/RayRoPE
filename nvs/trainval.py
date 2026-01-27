@@ -16,8 +16,8 @@ from torch import Tensor
 from torchmetrics.image import PeakSignalNoiseRatio, StructuralSimilarityIndexMeasure
 from torchmetrics.image.lpip import LearnedPerceptualImagePatchSimilarity
 
-from nvs.dataset import TrainDataset, EvalDataset, _normalize_poses_identity_unit_distance
-from nvs.objaverse_dataset_gpt import ObjaverseTrainDataset, ObjaverseEvalDataset
+from nvs.re10k_dataset import RE10K_TrainDataset, RE10K_EvalDataset, _normalize_poses_identity_unit_distance
+from nvs.objaverse_dataset import ObjaverseTrainDataset, ObjaverseEvalDataset
 from nvs.co3d_dataset import Co3dTrainDataset, Co3dEvalDataset
 from nvs.lvsm import (
     Camera,
@@ -30,8 +30,12 @@ from pos_enc.utils.runner import Launcher, LauncherConfig, nested_to_device
 from pos_enc.timing_utils import time_block, get_timing_stats
 
 # Get machine-dependent paths from environment variables
-TRAIN_DATA_DIR = os.environ["PROPE_TRAIN_DATA_DIR"]
-TEST_DATA_DIR = os.environ["PROPE_TEST_DATA_DIR"]
+RE10K_TRAIN_DIR = os.environ["RE10K_TRAIN_DIR"]
+RE10K_TEST_DIR = os.environ["RE10K_TEST_DIR"]
+OBJV_DIR = os.environ["OBJV_DIR"]
+CO3D_DIR = os.environ["CO3D_DIR"]
+CO3D_ANNOTATION_DIR = os.environ["CO3D_ANNOTATION_DIR"]
+CO3D_DEPTH_DIR = os.environ["CO3D_DEPTH_DIR"]
 
 def write_tensor_to_image(
     x: Tensor,
@@ -193,11 +197,10 @@ class LVSMLauncher(Launcher):
         return processed
 
     def train_initialize(self) -> Dict[str, Any]:
-        # ------------- Setup Data. ------------- #
-        scenes = sorted(glob.glob(f"{TRAIN_DATA_DIR}/*"))
-        
+        # ------------- Setup Data. ------------- #       
         if self.config.dataset == "re10k":
-            dataset = TrainDataset(
+            scenes = sorted(glob.glob(f"{RE10K_TRAIN_DIR}/*"))
+            dataset = RE10K_TrainDataset(
                 scenes,
                 patch_size=self.config.dataset_patch_size,
                 zoom_factor=self.config.train_zoom_factor,
@@ -205,6 +208,7 @@ class LVSMLauncher(Launcher):
                 supervise_views=self.config.dataset_supervise_views,
             )
         elif self.config.dataset == "objaverse":
+            scenes = sorted(glob.glob(f"{OBJV_DIR}/*"))
             index_file = os.path.join(
                 os.path.dirname(os.path.abspath(__file__)), 
                 f"../{self.config.objaverse_train_index_file}"
@@ -229,6 +233,9 @@ class LVSMLauncher(Launcher):
                 input_views=2,
                 supervise_views=self.config.dataset_supervise_views,
                 load_depth=get_depth,
+                co3d_dir=CO3D_DIR,
+                annotation_dir=CO3D_ANNOTATION_DIR,
+                depth_dir=CO3D_DEPTH_DIR,
             )
         else:
             raise ValueError(f"Unknown dataset: {self.config.dataset}")
@@ -465,7 +472,7 @@ class LVSMLauncher(Launcher):
         # ------------- Setup Data. ------------- #
         dataset = None
         dataloaders = dict()
-        folder = TEST_DATA_DIR
+        # folder = TEST_DATA_DIR
         print(f"test zoom_factor: {self.config.test_zoom_factor}, random_zoom: {self.config.test_random_zoom}")
         
         if self.config.dataset == "re10k":
@@ -476,8 +483,8 @@ class LVSMLauncher(Launcher):
                 ), "Invalid input views and supervise views for RE10K, should be 2 and 3 respectively."
             
             for zoom_factor in self.config.test_zoom_factor:
-                dataset = EvalDataset(
-                    folder=folder,
+                dataset = RE10K_EvalDataset(
+                    folder=RE10K_TEST_DIR,
                     patch_size=self.config.dataset_patch_size,
                     zoom_factor=zoom_factor,
                     random_zoom=self.config.test_random_zoom,
@@ -496,18 +503,13 @@ class LVSMLauncher(Launcher):
                         dataset, batch_size=1, num_workers=0, pin_memory=True
                     ),
                 )
-        elif self.config.dataset == "objaverse":
-            # temporary overwrite
-            # self.config.objaverse_test_index_file = f"assets/objaverse_index_test_context{self.config.test_input_views}_all.json"
-            # self.config.objaverse_test_radial_index_file = f"assets/objaverse_index_test_context{self.config.test_input_views}_radial.json"
-            # self.config.objaverse_test_spherical_index_file = f"assets/objaverse_index_test_context{self.config.test_input_views}_spherical.json"
-            
+        elif self.config.dataset == "objaverse":            
             get_depth = ("known" in self.config.model_config.depth_type) \
                 or self.config.model_config.depth_input
             # get_depth = True
             if self.config.test_rad_sph:
                 # radial
-                scenes = sorted(glob.glob(f"{folder}/*"))
+                scenes = sorted(glob.glob(f"{OBJV_DIR}/*"))
                 index_file = os.path.join(
                     os.path.dirname(os.path.abspath(__file__)), 
                     f"../{self.config.objaverse_test_radial_index_file}"
@@ -552,7 +554,7 @@ class LVSMLauncher(Launcher):
                     ),
                 )
             else:
-                scenes = sorted(glob.glob(f"{folder}/*"))
+                scenes = sorted(glob.glob(f"{OBJV_DIR}/*"))
                 index_file = os.path.join(
                     os.path.dirname(os.path.abspath(__file__)), 
                     f"../{self.config.objaverse_test_index_file}"
@@ -578,7 +580,6 @@ class LVSMLauncher(Launcher):
         elif self.config.dataset == "co3d":
             get_depth = ("known" in self.config.model_config.depth_type) \
                 or self.config.model_config.depth_input
-            # get_depth = True
             dataset_seen = Co3dEvalDataset(
                 categories=self.config.co3d_train_categories,
                 index_file=self.config.co3d_test_seen_index_file,
@@ -587,6 +588,9 @@ class LVSMLauncher(Launcher):
                 first_n=self.config.test_n,
                 load_depth=get_depth,
                 render_video=self.config.render_video,
+                co3d_dir=CO3D_DIR,
+                annotation_dir=CO3D_ANNOTATION_DIR,
+                depth_dir=CO3D_DEPTH_DIR,
             )
             dataloaders["seen"] = (
                 self.config.test_input_views,
@@ -602,6 +606,9 @@ class LVSMLauncher(Launcher):
                     input_views=self.config.test_input_views,
                     first_n=self.config.test_n,
                     load_depth=get_depth,
+                    co3d_dir=CO3D_DIR,
+                    annotation_dir=CO3D_ANNOTATION_DIR,
+                    depth_dir=CO3D_DEPTH_DIR,
                 )
                 dataloaders["unseen"] = (
                     self.config.test_input_views,
@@ -618,7 +625,6 @@ class LVSMLauncher(Launcher):
             # Apply torch.compile for performance optimization if enabled
             if self.config.use_torch_compile:
                 model = torch.compile(model)
-            # print(f"Model is initialized in rank {self.world_rank}")
 
         # ------------- Setup Metrics. ------------- #
         psnr_fn = PeakSignalNoiseRatio(data_range=1.0).to(self.device)
@@ -636,7 +642,6 @@ class LVSMLauncher(Launcher):
             "ssim_fn": ssim_fn,
             "lpips_fn": lpips_fn,
         }
-        # print(f"Launcher(Test) is intialized in rank {self.world_rank}")
         return state
 
     @torch.inference_mode()
@@ -658,16 +663,7 @@ class LVSMLauncher(Launcher):
                 ref_cams, tar_cams = processed["ref_cams"], processed["tar_cams"]
                 ref_paths, tar_paths = processed["ref_paths"], processed["tar_paths"]
 
-                # save tar cams
-                # if self.world_rank == 0:
-                #     torch.save(tar_cams, f"logs/debug_tensor/tar_cams.pt")
-                #     exit()
-
                 context_depths = processed.get("context_depths", None)
-                # print(f"ref_imgs shape: {ref_imgs.shape}, tar_imgs shape: {tar_imgs.shape}")
-                # print(f"ref_cams K shape: {ref_cams.K.shape}, tar_cams K shape: {tar_cams.K.shape}")
-                # print(f"ref_cams camtoworld shape: {ref_cams.camtoworld.shape}, tar_cams camtoworld shape: {tar_cams.camtoworld.shape}")
-                # print(f"context_depths shape: {context_depths.shape if context_depths is not None else None}")
 
                 # Forward.
                 with torch.amp.autocast(

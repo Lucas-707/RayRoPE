@@ -8,8 +8,7 @@ import math
 import torch
 import torch.nn.functional as F
 import numpy as np
-from prope.frequency import RoPETransform
-from prope.timing_utils import time_block
+from pos_enc.timing_utils import time_block
 from torch.profiler import profile, record_function, ProfilerActivity
 
 MAX_DEPTH = 100.0

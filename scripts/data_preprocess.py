@@ -9,7 +9,7 @@ import numpy as np
 from PIL import Image
 from tqdm import tqdm
 
-from nvs.dataset import load_and_maybe_update_meta_info
+from RayRoPE.nvs.re10k_dataset import load_and_maybe_update_meta_info
 
 
 def load_frames_from_meta_info(

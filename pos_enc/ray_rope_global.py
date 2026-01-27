@@ -5,8 +5,7 @@ from typing import Callable, Optional, Tuple, List
 import os
 import torch
 import torch.nn.functional as F
-from prope.frequency import RoPETransform
-from prope.timing_utils import time_block
+from pos_enc.timing_utils import time_block
 from torch.profiler import profile, record_function, ProfilerActivity
 
 
@@ -45,11 +44,6 @@ class Global_RayRoPE_DotProductAttention(torch.nn.Module):
         assert self.head_dim % (self.rope_coord_dim * 2) == 0, f"rope_enc_dim={self.head_dim} must be multiple of rope_coord_dim * 2={self.rope_coord_dim * 2}"
         self.num_rope_freqs = self.head_dim // self.rope_mat_dim
         print(f"head_dim: {head_dim}, rope_enc_dim: {self.head_dim}, rope_coord_dim: {self.rope_coord_dim}, num_rope_freqs: {self.num_rope_freqs}")
-        self.rope_enc_transform = RoPETransform(
-            rope_mat_dim= self.rope_mat_dim,
-            num_rope_freqs=self.num_rope_freqs,
-            type = rope_transform_type,
-        )
         
 
 
@@ -167,7 +161,6 @@ def _prepare_apply_fns(
     patches_y: int,  # How many patches tall is each image?
     image_width: int,  # Width of the image. Used to normalize intrinsics.
     image_height: int,  # Height of the image. Used to normalize intrinsics.
-    rope_transform: RoPETransform = None,
     use_p0: bool = True,
     use_pd: bool = False,
     use_pinf: bool = True,

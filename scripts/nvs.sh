@@ -1,93 +1,27 @@
 #! /bin/bash
-#SBATCH --job-name=nvs_all
-#SBATCH --nodes=1
-#SBATCH --gres=gpu:2
-#SBATCH --cpus-per-task=8
-#SBATCH --mem=150G
-#SBATCH --time=24:00:00
-#SBATCH --partition=shubhamlong
-#SBATCH --nodelist=grogu-2-31
-
-# Command bank
-# ========================== RE10K ==========================
-# sbatch scripts/nvs_all.sh --dataset re10k --ray_encoding plucker --pos_enc none --seed 1
-# sbatch scripts/nvs_all.sh --dataset re10k --pos_enc global-0+inf --seed 1
-# sbatch scripts/nvs_all.sh --dataset re10k --pos_enc gta --ray_encoding none --seed 1
-# sbatch scripts/nvs_all.sh --dataset re10k --pos_enc prope --seed 1
-
-# sbatch scripts/nvs_all.sh --dataset re10k --pos_enc 0+d --depth_type predict_dsig --seed 1
-# sbatch scripts/nvs_all.sh --dataset re10k --pos_enc d_pj+0_3d --depth_type predict_dsig --seed 1
-
-# sbatch scripts/nvs_all.sh --dataset re10k --pos_enc d_pj+0_3d --depth_type predict_dsig --init_d 1.0 --seed 1
-# sbatch scripts/nvs_all.sh --dataset re10k --pos_enc d_pj+0_3d --depth_type predict_dsig --init_d 2.0 --seed 1
-# sbatch scripts/nvs_all.sh --dataset re10k --pos_enc d_pj+0_3d --depth_type predict_dsig --init_sig 1.0 --seed 1
-# sbatch scripts/nvs_all.sh --dataset re10k --pos_enc d_pj+0_3d --depth_type predict_dsig --init_sig 0.0 --seed 1
-# sbatch scripts/nvs_all.sh --dataset re10k --pos_enc d_pj+0_3d --depth_type predict_dsig --init_d 1.0 --init_sig 1.0 --seed 1
-
-
-# sbatch scripts/nvs_all.sh --dataset re10k --pos_enc d_pj+0_3d --depth_type predict_d --seed 1
-# sbatch scripts/nvs_all.sh --dataset re10k --pos_enc inf_pj+0_3d  --seed 1
-# sbatch scripts/nvs_all.sh --dataset re10k --pos_enc d_pj+0_3d --num_rays 1 --freq_base 1.75 --depth_type predict_dsig  --seed 1
-# sbatch scripts/nvs_all.sh --dataset re10k --pos_enc d_pj+0_3d --freq_base 1.0 --depth_type predict_dsig  --seed 1
-# sbatch scripts/nvs_all.sh --dataset re10k --pos_enc d_pj+0_3d --disable_vo --depth_type predict_dsig  --seed 1
-
-# ========================== Objaverse ==========================
-# sbatch scripts/nvs_all.sh --dataset objaverse --ray_encoding plucker --pos_enc none --seed 1
-# sbatch scripts/nvs_all.sh --dataset objaverse --ray_encoding plucker --pos_enc none --p_loss_w 0.01 --seed 1  --test-rad-sph
-# sbatch scripts/nvs_all.sh --dataset objaverse --pos_enc global-0+inf --seed 1  --test-rad-sph
-# sbatch scripts/nvs_all.sh --dataset objaverse --pos_enc gta --ray_encoding none --seed 1  --test-rad-sph
-# sbatch scripts/nvs_all.sh --dataset objaverse --pos_enc prope --seed 1  --test-rad-sph
-
-
-# sbatch scripts/nvs_all.sh --dataset objaverse --pos_enc 0+d --depth_type predict_dsig --seed 2
-# sbatch scripts/nvs_all.sh --dataset objaverse --pos_enc d_pj+0_3d --depth_type predict_dsig  --seed 1 --test-rad-sph
-
-# sbatch scripts/nvs_all.sh --dataset objaverse --pos_enc d_pj+0_3d --depth_type predict_d --seed 1
-# sbatch scripts/nvs_all.sh --dataset objaverse --pos_enc inf_pj+0_3d  --seed 1
-# sbatch scripts/nvs_all.sh --dataset objaverse --pos_enc d_pj+0_3d --num_rays 1 --freq_base 1.75 --depth_type predict_dsig  --seed 1
-# sbatch scripts/nvs_all.sh --dataset objaverse --pos_enc d_pj+0_3d --freq_base 1.0 --depth_type predict_dsig  --seed 1
-# sbatch scripts/nvs_all.sh --dataset objaverse --pos_enc d_pj+0_3d --disable_vo --depth_type predict_dsig  --seed 1
-
-# ------------ input depth ------------
-# sbatch scripts/nvs_all.sh --dataset objaverse --input_depth --pos_enc prope --seed 1 
-# sbatch scripts/nvs_all.sh --dataset objaverse --input_depth --pos_enc d_pj+0_3d --depth_type known+predict_dsig  --seed 1
-
-
-# ========================== CO3D Seen ==========================
-# sbatch scripts/nvs_all.sh --dataset co3d --ray_encoding plucker --pos_enc none --seed 1 --test-context-views 4
-# sbatch scripts/nvs_all.sh --dataset co3d --pos_enc global-0+inf --seed 1
-# sbatch scripts/nvs_all.sh --dataset co3d --pos_enc gta --ray_encoding none --seed 1 --test-context-views 4
-# sbatch scripts/nvs_all.sh --dataset co3d --pos_enc prope --seed 1 --test-context-views 4
-
-
-# sbatch scripts/nvs_all.sh --dataset co3d --pos_enc 0+d --depth_type predict_dsig --seed 1
-# sbatch scripts/nvs_all.sh --dataset co3d --pos_enc d_pj+0_3d --depth_type predict_dsig  --seed 1 --test
-
-# sbatch scripts/nvs_all.sh --dataset co3d --pos_enc d_pj+0_3d --depth_type predict_d --seed 1
-# sbatch scripts/nvs_all.sh --dataset co3d --pos_enc inf_pj+0_3d  --seed 1
-# sbatch scripts/nvs_all.sh --dataset co3d --pos_enc d_pj+0_3d --num_rays 1 --freq_base 1.75 --depth_type predict_dsig  --seed 1
-# sbatch scripts/nvs_all.sh --dataset co3d --pos_enc d_pj+0_3d --freq_base 1.0 --depth_type predict_dsig  --seed 1
-# sbatch scripts/nvs_all.sh --dataset co3d --pos_enc d_pj+0_3d --disable_vo --depth_type predict_dsig  --seed 1
-
-# ------------ input depth ------------
-# sbatch scripts/nvs_all.sh --dataset co3d --input_depth --pos_enc prope --seed 1 
-# sbatch scripts/nvs_all.sh --dataset co3d --input_depth --pos_enc d_pj+0_3d --depth_type known+predict_dsig  --seed 1
-
-
 source ~/.bashrc
-conda activate prope
+conda activate rayrope
 
-TEST_RENDER_VIDEO=false
-TEST_RENDER_VIEW=false
-TEST_RAD_SPH=false
-TEST_N=200
+# Machine-dependent paths
+HOSTNAME=$(hostname)
+LOG_ROOT="./rayrope_out" # where model ckpts, logs, visual outputs are saved. Feel free to change.
+
+# Dataset paths
+# TODO: Replace the following paths with your dataset paths
+export RE10K_TRAIN_DIR="/grogu/datasets/realestate/re10k_processed/train" # Replace with {YOUR_RE10K_DIR}/re10k_processed/train
+export RE10K_TEST_DIR="/grogu/datasets/realestate/re10k_processed/test" # Replace with {YOUR_RE10K_DIR}/re10k_processed/test
+export OBJV_DIR="/grogu/user/yuwu3/objaverse80k_sp/data" # Replace with the path to your Objaverse
+export CO3D_DIR="/grogu/datasets/co3d"
+export CO3D_ANNOTATION_DIR="/grogu/user/amylin2/co3d_v2_annotations"
+export CO3D_DEPTH_DIR="/grogu/datasets/co3d"
 
 # Auto-detect GPUs
-NGPUS=$(nvidia-smi -L | wc -l)
-GPU_INDICES=$(nvidia-smi --query-gpu=index --format=csv,noheader | tr '\n' ',' | sed 's/,$//')
+# NGPUS=$(nvidia-smi -L | wc -l)
+# GPU_INDICES=$(nvidia-smi --query-gpu=index --format=csv,noheader | tr '\n' ',' | sed 's/,$//')
 
-NGPUS=2
-GPU_INDICES="0,1"
+# Or manually set GPUs
+NGPUS=1
+GPU_INDICES="0"
 export CUDA_VISIBLE_DEVICES=$GPU_INDICES
 echo "Using $NGPUS GPUs: $CUDA_VISIBLE_DEVICES"
 
@@ -97,7 +31,7 @@ export TORCHINDUCTOR_DISABLE_AUTOTUNE_CACHE=1
 export TORCHINDUCTOR_FORCE_RECOMPILE=1
 
 # Defaults
-DATASET="re10k"
+DATASET="co3d"
 RAY_ENCODING="camray"
 POS_ENC="prope"
 ROPE_T_TYPE="none"
@@ -107,7 +41,6 @@ DENC_TYPE="inv_d"
 INIT_D=0.0
 INIT_SIG=3.0
 INPUT_DEPTH="false"
-INF_QD="false"
 FREQ_BASE=3.0
 NUM_RAYS=3
 DISABLE_VO="false"
@@ -125,6 +58,8 @@ CATEGORY="seen"
 P_LOSS_W=0.5
 BG_LOSS_W=1.0
 PDB_MODE=false
+TEST_N=200 # test first N scenes when rendering video/view is enabled
+
 
 # Argument Parsing
 while [[ $# -gt 0 ]]; do
@@ -139,7 +74,6 @@ while [[ $# -gt 0 ]]; do
     --init_d) INIT_D="$2"; shift 2 ;;
     --init_sig) INIT_SIG="$2"; shift 2 ;;
     --input_depth) INPUT_DEPTH="true"; shift 1 ;;
-    --inf_qd) INF_QD="true"; shift 1 ;;
     --freq_base) FREQ_BASE="$2"; shift 2 ;;
     --num_rays) NUM_RAYS="$2"; shift 2 ;;
     --disable_vo) DISABLE_VO="true"; shift 1 ;;
@@ -165,34 +99,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# Machine-dependent paths
-HOSTNAME=$(hostname)
-if [[ "$HOSTNAME" == *"grogu"* ]]; then
-  LOG_ROOT="/grogu/user/yuwu3/rayrope_log_Dec"
 
-  if [ "$DATASET" == "re10k" ]; then
-    export PROPE_TRAIN_DATA_DIR="/grogu/datasets/realestate/re10k_processed/train"
-    export PROPE_TEST_DATA_DIR="/grogu/datasets/realestate/re10k_processed/test"
-  elif [ "$DATASET" == "objaverse" ]; then
-    export PROPE_TRAIN_DATA_DIR="/grogu/user/yuwu3/objaverse80k_sp/data"
-    export PROPE_TEST_DATA_DIR="/grogu/user/yuwu3/objaverse80k_sp/data"
-  elif [ "$DATASET" == "co3d" ]; then
-    export PROPE_TRAIN_DATA_DIR=""
-    export PROPE_TEST_DATA_DIR=""
-  fi
-elif [[ "$HOSTNAME" == *"bridges2"* ]]; then
-  export LOG_ROOT="/ocean/projects/cis240034p/ywu15/rayrope_log_Dec"
-  if [ "$DATASET" == "re10k" ]; then
-    export PROPE_TRAIN_DATA_DIR="/ocean/projects/cis240058p/ywu15/re10k_processed/train"
-    export PROPE_TEST_DATA_DIR="/ocean/projects/cis240058p/ywu15/re10k_processed/test"
-  elif [ "$DATASET" == "objaverse" ]; then
-    export PROPE_TRAIN_DATA_DIR="/ocean/projects/cis240058p/ywu15/objaverse80k_sp/data"
-    export PROPE_TEST_DATA_DIR="/ocean/projects/cis240058p/ywu15/objaverse80k_sp/data"
-  elif [ "$DATASET" == "co3d" ]; then
-    export PROPE_TRAIN_DATA_DIR=""
-    export PROPE_TEST_DATA_DIR=""
-  fi
-fi
 
 # Logs & Name
 EFFECTIVE_BATCH_SIZE=$((BATCH_SIZE * NGPUS))
@@ -206,7 +113,6 @@ NAME="${POS_ENC}"
 [[ "$INIT_SIG" != "3.0" ]] && NAME="${NAME}-inits${INIT_SIG}"
 [[ "$POS_ENC" == *"+"* ]] && NAME="${NAME}-${DENC_TYPE}"
 [[ "$INPUT_DEPTH" == "true" ]] && NAME="${NAME}-indepth"
-[[ "$INF_QD" == "true" ]] && NAME="${NAME}-infqd"
 [[ $FREQ_BASE != 3.0 ]] && NAME="${NAME}-fb${FREQ_BASE}"
 [[ "$DISABLE_VO" == "true" ]] && NAME="${NAME}-no_vo"
 [[ "$ROPE_T_TYPE" != "none" ]] && NAME="${NAME}-${ROPE_T_TYPE}"
@@ -220,7 +126,7 @@ INPUT_DEPTH_STR=$([ "$INPUT_DEPTH" == "true" ] && echo "known_d" || echo "unknow
 DATASET_STR=$([ "$DATASET" == "co3d" ] && echo "${DATASET}_${CATEGORY}" || echo "${DATASET}")
 
 LOG_DIR="${LOG_ROOT}/${MODEL_CONFIG}/${DATASET_STR}/${INPUT_DEPTH_STR}"
-PRINT_LOG_DIR="./logs/Dec/${MODEL_CONFIG}/${DATASET_STR}/${INPUT_DEPTH_STR}"
+PRINT_LOG_DIR="./logs/${MODEL_CONFIG}/${DATASET_STR}/${INPUT_DEPTH_STR}"
 [[ $BG_LOSS_W != 1.0 || $P_LOSS_W != 0.5 ]] && LOG_DIR="${LOG_DIR}/masked" && PRINT_LOG_DIR="${PRINT_LOG_DIR}/masked"
 
 LOG_DIR="${LOG_DIR}/${NAME}"
@@ -273,7 +179,6 @@ BASE_CMD+=(
 )
 
 [[ "$INPUT_DEPTH" == "true" ]] && BASE_CMD+=("--model_config.depth_input")
-[[ "$INF_QD" == "true" ]] && BASE_CMD+=("--model_config.inf_qd")
 [[ "$DISABLE_VO" == "true" ]] && BASE_CMD+=("--model_config.disable_vo")
 [[ "$TEST_UNSEEN" == "true" && "$DATASET" == "co3d" ]] && BASE_CMD+=("--co3d_test_unseen")
 [[ "$BG_LOSS_W" != "1.0" ]] && BASE_CMD+=("--get_mask")
