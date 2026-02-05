@@ -23,6 +23,8 @@ class RayRoPE_DotProductAttention(torch.nn.Module):
     """
     Self-attention with RayRoPE positional encoding for multi-view patches.
     For the RayRoPE presented in the paper, please use the default options. 
+    The forward() function of this class is meant to replace 
+    torch.nn.functional.scaled_dot_product_attention()
 
     Args:
         head_dim: Dimension of each attention head.
@@ -47,7 +49,7 @@ class RayRoPE_DotProductAttention(torch.nn.Module):
             "asinh_d" (asinh depth).
         freq_base: Multiplier between adjacent RoPE frequencies.
         apply_vo: If True, apply RoPE to values and output (VO); else only Q/K.
-
+        
     """
 
     def __init__(
