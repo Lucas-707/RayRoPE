@@ -8,7 +8,7 @@ import math
 import torch
 import torch.nn.functional as F
 import numpy as np
-from pos_enc.timing_utils import time_block
+# from pos_enc.timing_utils import time_block
 from torch.profiler import profile, record_function, ProfilerActivity
 
 MAX_DEPTH = 100.0
@@ -19,8 +19,35 @@ MAX_ASINH_DEPTH = math.asinh(MAX_DEPTH)
 MAX_D_F = 10.0
 MAX_ASINH_D_F = math.asinh(MAX_D_F)
 
-class RayRoPE_Release_DotProductAttention(torch.nn.Module):
-    """Patch-RoPE attention with precomputed RoPE coefficients."""
+class RayRoPE_DotProductAttention_Cross(torch.nn.Module):
+    """
+    Cross-attention with RayRoPE positional encoding for multi-view patches.
+
+    Args:
+        head_dim: Dimension of each attention head.
+            need to be multiple of rope_coord_dim * 2
+            where rope_coord_dim = 3 * use_p0 + num_rays_per_patch * 3 * (use_pd + use_pinf)
+        pos_enc_type: Which point types and encodings to include. Format:
+            "<point>_<transform>[+<point>_<transform>...]" where <point> in {"0", "d", "inf"}
+            and <transform> in {"pj", "3d"}. Examples: "d_pj+0_3d", "0_pj+inf_pj".
+            <point>
+                "0": camera center
+                "d": point at predicted (or known) depth
+                "inf": point at infinity
+            <transform>
+                "pj": transform to query frame via projection
+                "3d": transform to query frame via SE(3) extrinsics
+            For the RayRoPE presented in the paper, use "d_pj+0_3d".
+        num_rays_per_patch: Number of rays sampled per patch. Supported values:
+            1 (center), 2 (corners), 3 (corners).
+        depth_type: Depth source: "predict_dsig" or "known+predict_dsig".
+            "known+predict_dsig" requires known depths to be provided for context views.
+        denc_type: Depth encoding: "inv_d" (disparity), "d" (depth), or
+            "asinh_d" (asinh depth).
+        freq_base: Multiplier between adjacent RoPE frequencies.
+        apply_vo: If True, apply RoPE to values and output (VO); else only Q/K.
+
+    """
 
     def __init__(
         self,
@@ -29,10 +56,10 @@ class RayRoPE_Release_DotProductAttention(torch.nn.Module):
         patches_y: int,
         image_width: int,
         image_height: int,
-        pos_enc_type: str = 'd_pj+0_3d', # 0+inf, 0+d
+        pos_enc_type: str = 'd_pj+0_3d',
         num_rays_per_patch: int = 3,
-        depth_type: str = 'predict_dsig', # predict_dsig, known+predict_dsig
-        denc_type: str = 'd', # inv_d, d, asinh_d
+        depth_type: str = 'predict_dsig',
+        denc_type: str = 'd',
         freq_base: float = 3.0,
         apply_vo: bool = True,
     ):
@@ -50,7 +77,7 @@ class RayRoPE_Release_DotProductAttention(torch.nn.Module):
         self.num_rays_per_patch = num_rays_per_patch
         self.freq_base = freq_base
         self.apply_vo = apply_vo
-        self.last_positions = None
+        # self.last_positions = None
 
         # parse pos_enc_type
         self.parse_pos_enc_type(pos_enc_type)
@@ -62,6 +89,13 @@ class RayRoPE_Release_DotProductAttention(torch.nn.Module):
         print(f"head_dim: {head_dim}, rope_enc_dim: {self.head_dim}, rope_coord_dim: {self.rope_coord_dim}, num_rope_freqs: {self.num_rope_freqs}")
 
         self.context_depths = None
+
+        if self.num_rays_per_patch == 3:
+            self.offsets = [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]
+        elif self.num_rays_per_patch == 2:
+            self.offsets = [[0.0, 0.0], [1.0, 1.0]]
+        else:
+            self.offsets = [[0.5, 0.5]]
 
     def parse_pos_enc_type(self, pos_enc_type: str):
         self.use_p0 = False
@@ -93,172 +127,88 @@ class RayRoPE_Release_DotProductAttention(torch.nn.Module):
         q: torch.Tensor,  # (batch, num_heads, seqlen, head_dim)
         k: torch.Tensor,  # (batch, num_heads, seqlen, head_dim)
         v: torch.Tensor,  # (batch, num_heads, seqlen, head_dim)
-        viewmats: torch.Tensor,  # (batch, cameras, 4, 4)
-        Ks: Optional[torch.Tensor],  # (batch, cameras, 3, 3)
         predicted_d: Optional[torch.Tensor] = None,  # (batch, seqlen, 1 or 2)
+        predicted_d_kv: Optional[torch.Tensor] = None,  # (batch, seqlen, 1 or 2)
         timing_enabled: bool = False,
         **kwargs,
     ) -> torch.Tensor:
         
-        with time_block("attention_total", timing_enabled):
-            with time_block("prepare_enc", timing_enabled):
-                positions_debug = {}
-                apply_fn_q, all_apply_fns_kv, apply_fn_o = self._prepare_apply_fns(
-                    w2cs=viewmats,
-                    Ks=Ks,
-                    predicted_d=predicted_d,
-                    positions_collector=positions_debug,
-                )
-                self.last_positions = positions_debug
+        # if predicted_d_kv is None:
+        #     predicted_d_kv = predicted_d
+            
+        # with time_block("attention_total", timing_enabled):
+            # with time_block("prepare_enc", timing_enabled):
+        # positions_debug = {}
+        apply_fn_q, all_apply_fns_kv, apply_fn_o = self._prepare_apply_fns(
+            predicted_d=predicted_d,
+            predicted_d_kv=predicted_d_kv,
+            # positions_collector=positions_debug,
+        )
+        # self.last_positions = positions_debug
 
-            output = self.rayrope_dot_product_attention(
-                q,
-                k,
-                v,
-                num_cameras=viewmats.shape[1],
-                apply_fn_q=apply_fn_q,
-                all_apply_fns_kv=all_apply_fns_kv,
-                apply_fn_o=apply_fn_o,
-                apply_vo=self.apply_vo,
-                timing_enabled=timing_enabled,
-                **kwargs,
-            )
+        output = self.rayrope_dot_product_attention(
+            q,
+            k,
+            v,
+            num_cameras=self.num_cameras,
+            apply_fn_q=apply_fn_q,
+            all_apply_fns_kv=all_apply_fns_kv,
+            apply_fn_o=apply_fn_o,
+            apply_vo=self.apply_vo,
+            timing_enabled=timing_enabled,
+            **kwargs,
+        )
 
         return output
 
     def _precompute_and_cache_apply_fns(
         self, 
-        viewmats: torch.Tensor, 
+        w2cs: torch.Tensor, 
         Ks: Optional[torch.Tensor],
+        w2cs_kv: torch.Tensor,
+        Ks_kv: Optional[torch.Tensor],
         context_depths: Optional[torch.Tensor] = None,
     ):
-        (batch, num_cameras, _, _) = viewmats.shape
-        # assert viewmats.shape == (batch, num_cameras, 4, 4)
-        # assert Ks is None or Ks.shape == (batch, num_cameras, 3, 3)
+        (batch, num_cameras, _, _) = w2cs.shape
+        (batch_kv, num_cameras_kv, _, _) = w2cs_kv.shape
+        assert batch == batch_kv, "Batch size for Q and KV must be the same."
         
+        self.batch = batch
         self.num_cameras = num_cameras
+        self.num_cameras_kv = num_cameras_kv
+
+        # Note: different from rayrope.py, here we assume context_depths are for KV views
         self.context_depths = context_depths
 
-        self.w2cs = viewmats  # (batch, cameras, 4, 4)
-        self.c2ws = _invert_SE3(viewmats)  # (batch, cameras, 4, 4)
-        # Normalize camera intrinsics.
-        Ks_norm = torch.zeros_like(Ks)
-        Ks_norm[..., 0, 0] = Ks[..., 0, 0] / self.image_width
-        Ks_norm[..., 1, 1] = Ks[..., 1, 1] / self.image_height
-        Ks_norm[..., 0, 2] = Ks[..., 0, 2] / self.image_width - 0.5
-        Ks_norm[..., 1, 2] = Ks[..., 1, 2] / self.image_height - 0.5
-        Ks_norm[..., 2, 2] = 1.0
-        self.Ks_norm = Ks_norm
+        self.w2cs = w2cs  # (batch, cameras, 4, 4)
+        self.c2ws = _invert_SE3(w2cs)  # (batch, cameras, 4, 4)
+        Ks_norm = normalize_K(Ks, self.image_width, self.image_height)
+        self.w2cs_kv = w2cs_kv  # (batch, cameras_kv, 4, 4)
+        self.c2ws_kv = _invert_SE3(w2cs_kv)  # (batch, cameras_kv, 4, 4)
+        Ks_norm_kv = normalize_K(Ks_kv, self.image_width, self.image_height)
 
         # Compute the camera projection matrices we use in PRoPE.
-        self.P = torch.einsum("...ij,...jk->...ik", _lift_K(Ks_norm), viewmats)
+        self.P = torch.einsum("...ij,...jk->...ik", _lift_K(Ks_norm), w2cs)
         self.P_T = self.P.transpose(-1, -2)
         self.P_inv = torch.einsum(
             "...ij,...jk->...ik",
             self.c2ws,
             _lift_K(_invert_K(Ks_norm)),
         )
-        # assert self.P.shape == self.P_inv.shape == (batch, num_cameras, 4, 4)
-        # assert self.head_dim % (2*self.rope_coord_dim) == 0, f"rope_dim={self.head_dim} must be multiple of 2*coord_dim={2*self.rope_coord_dim}"
+        self.P_kv = torch.einsum("...ij,...jk->...ik", _lift_K(Ks_norm_kv), w2cs_kv)
+        self.P_T_kv = self.P_kv.transpose(-1, -2)
+        self.P_inv_kv = torch.einsum(
+            "...ij,...jk->...ik",
+            self.c2ws_kv,
+            _lift_K(_invert_K(Ks_norm_kv)),
+        )
 
-        if self.num_rays_per_patch == 3:
-            self.offsets = [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]
-        elif self.num_rays_per_patch == 2:
-            self.offsets = [[0.0, 0.0], [1.0, 1.0]]
-        else:
-            self.offsets = [[0.5, 0.5]]
 
         # get the ray segments in world coordinates
         self.p0_world = _get_cam_centers(self.c2ws, self.num_patches).unsqueeze(-2) # (batch, num_cameras, num_patches, 1, 4)
         self.pinf_world = _get_point_coords(self.P_inv, self.patches_x, self.patches_y, self.offsets) # (batch, num_cameras, num_patches, num_rays_per_patch, 4)
-
-        # positions_Q = defaultdict(list)
-        # self.positions_KV_common = []
-        # self.cos_KV_common = []
-        # self.sin_KV_common = []
-        # for cam_idx in range(num_cameras):
-        #     positions_KV = {}
-        #     P_q = self.P[:, cam_idx, :, :]  # (batch, 4, 4)
-        #     w2c_q = self.w2cs[:, cam_idx, :, :]  # (batch, 4, 4)
-
-        #     # cam centers
-        #     if self.p0_type == '3d':
-        #         p0_3d = _transform_to_query_frame(self.p0_world, P_q, w2c_q, self.p0_type, self.denc_type)
-        #         p0_3d = p0_3d.flatten(-2, -1)
-        #         positions_KV['p0'] = p0_3d
-        #         positions_Q['p0'].append(p0_3d[:, cam_idx])
-        #     elif self.p0_type == 'pj':
-        #         p0_dir, p0_d = _transform_to_query_frame(self.p0_world, P_q, w2c_q, self.p0_type, self.denc_type)
-        #         p0_dir = p0_dir[..., :2].flatten(-2, -1)
-        #         p0_d = p0_d.flatten(-2, -1)
-        #         positions_KV['p0_dir'] = p0_dir
-        #         positions_Q['p0_dir'].append(p0_dir[:, cam_idx])
-        #         if self.denc_type == 'inv_d':
-        #             positions_KV['p0_disparity'] = p0_d
-        #             positions_Q['p0_disparity'].append(p0_d[:, cam_idx])
-        #         elif self.denc_type == 'd':
-        #             positions_KV['p0_depth'] = p0_d
-        #             positions_Q['p0_depth'].append(p0_d[:, cam_idx])
-        #         elif self.denc_type == 'asinh_d':
-        #             positions_KV['p0_asinh_depth'] = p0_d
-        #             positions_Q['p0_asinh_depth'].append(p0_d[:, cam_idx])
-
-        #     # points at infinity
-        #     if self.pinf_type == '3d':
-        #         pinf_3d = _transform_to_query_frame(self.pinf_world, P_q, w2c_q, self.pinf_type, self.denc_type, norm_by='length')
-        #         pinf_3d = pinf_3d.flatten(-2, -1)
-        #         positions_KV['pinf_dir'] = pinf_3d
-        #         positions_Q['pinf_dir'].append(pinf_3d[:, cam_idx])
-        #     elif self.pinf_type == 'pj':
-        #         pinf_dir, _ = _transform_to_query_frame(self.pinf_world, P_q, w2c_q, self.pinf_type, self.denc_type)
-        #         pinf_dir = pinf_dir.flatten(-2, -1)
-        #         positions_KV['pinf_dir'] = pinf_dir
-        #         positions_Q['pinf_dir'].append(pinf_dir[:, cam_idx])
-        #         # no need to include depth here
-
-            
-        #     self.positions_KV_common.append(_clone_position_dict(positions_KV))
-
-        #     cos_KV, sin_KV = _prepare_rope_coeff_uniformd(positions_KV, self.num_rope_freqs, self.freq_base, batch, num_cameras, self.num_patches) # (batch, num_cameras, num_patches, num_freqs, num_coord)
-        #     self.cos_KV_common.append(cos_KV)
-        #     self.sin_KV_common.append(sin_KV)
-
-        #     if (not torch.isfinite(cos_KV).all()) or (not torch.isfinite(sin_KV).all()):
-        #         debug_info = {
-        #             "cos_KV": cos_KV,
-        #             "sin_KV": sin_KV,
-        #             "positions_KV": positions_KV,
-        #             "p0_world": self.p0_world,
-        #             "pinf_world": self.pinf_world,
-        #             "pd_world": self.pd_world,
-        #             "p0_3d": p0_3d,
-        #             "P_q": P_q,
-        #             "w2c_q": w2c_q,
-        #             "w2cs": w2cs,
-        #             "ks_norm": Ks_norm,
-        #             "cam_idx": cam_idx,
-        #         }
-        #         jobid = os.environ.get('SLURM_JOB_ID', 'unknown')
-        #         rank = os.environ.get('SLURM_PROCID', '0')
-
-        #         debug_path = f"/home/yuwu3/prope/logs/debug_tensor/kvnan_{jobid}_{rank}.pt"
-        #         torch.save(debug_info, debug_path)
-        #         print(f"Debug information saved to {debug_path}")
-        #         raise ValueError(f"NaN/inf values found in cos/sin KV coeffs in common p0/pinf for cam_idx={cam_idx}.")
-
-        # for key, val in positions_Q.items():
-        #     positions_Q[key] = torch.stack(val, dim=1)  # (batch, num_cameras, num_patches, ...)
-
-        # self.positions_Q_common = _clone_position_dict(positions_Q)
-
-        # cos_Q, sin_Q = _prepare_rope_coeff_uniformd(positions_Q, self.num_rope_freqs, self.freq_base, batch, num_cameras, self.num_patches)
-        
-        # if (not torch.isfinite(cos_Q).all()) or (not torch.isfinite(sin_Q).all()):
-        #     raise ValueError("NaN/inf values found in rope_matrices_Q.")
-
-        # self.cos_Q_common = cos_Q
-        # self.sin_Q_common = sin_Q
-
+        self.p0_world_kv = _get_cam_centers(self.c2ws_kv, self.num_patches).unsqueeze(-2) # (batch, num_cameras_kv, num_patches, 1, 4)
+        self.pinf_world_kv = _get_point_coords(self.P_inv_kv, self.patches_x, self.patches_y, self.offsets) # (batch, num_cameras_kv, num_patches, num_rays_per_patch, 4)
         return
 
     def rayrope_dot_product_attention(
@@ -292,33 +242,33 @@ class RayRoPE_Release_DotProductAttention(torch.nn.Module):
         
 
         out = torch.zeros_like(q)
-        with time_block("apply_enc", timing_enabled):
-            q = apply_fn_q(q)
+        # with time_block("apply_enc", timing_enabled):
+        q = apply_fn_q(q)
 
         # assert not (torch.isinf(q).any()), "Inf values found in encoded q."
         for cam_idx, apply_fn_kv in enumerate(all_apply_fns_kv):
-            with time_block("apply_enc", timing_enabled):
-                k_idx = apply_fn_kv(k)
-                if apply_vo:
-                    v_idx = apply_fn_kv(v)
-                else:
-                    v_idx = v
+            # with time_block("apply_enc", timing_enabled):
+            k_idx = apply_fn_kv(k)
+            if apply_vo:
+                v_idx = apply_fn_kv(v)
+            else:
+                v_idx = v
             # assert not (torch.isinf(k_idx).any()), f"Inf values found in encoded k for cam_idx={cam_idx}."
             # assert not (torch.isinf(v_idx).any()), f"Inf values found in encoded v for cam_idx={cam_idx}."
 
-            with time_block("attention", timing_enabled):
-                q_idx = q[:, :, cam_idx * num_patches : (cam_idx + 1) * num_patches, :]
-                out_idx = F.scaled_dot_product_attention(
-                    query=q_idx.contiguous(),
-                    key=k_idx.contiguous(),
-                    value=v_idx.contiguous(),
-                    **kwargs,
-                )
-                out[:, :, cam_idx * num_patches : (cam_idx + 1) * num_patches, :] = out_idx
-                # assert not (torch.isinf(out_idx).any()), "Inf values found in attention out_idx."
+            # with time_block("attention", timing_enabled):
+            q_idx = q[:, :, cam_idx * num_patches : (cam_idx + 1) * num_patches, :]
+            out_idx = F.scaled_dot_product_attention(
+                query=q_idx.contiguous(),
+                key=k_idx.contiguous(),
+                value=v_idx.contiguous(),
+                **kwargs,
+            )
+            out[:, :, cam_idx * num_patches : (cam_idx + 1) * num_patches, :] = out_idx
+            # assert not (torch.isinf(out_idx).any()), "Inf values found in attention out_idx."
         if apply_vo:
-            with time_block("apply_enc", timing_enabled):
-                out = apply_fn_o(out)
+            # with time_block("apply_enc", timing_enabled):
+            out = apply_fn_o(out)
 
         # assert not (torch.isnan(out).any()), "NaN values found in attention output."
         # assert not (torch.isinf(out).any()), "Inf values found in attention output."
@@ -329,30 +279,36 @@ class RayRoPE_Release_DotProductAttention(torch.nn.Module):
     @torch.compile()
     def _prepare_apply_fns(
         self,
-        w2cs: torch.Tensor,  # (batch, cameras, 4, 4)
-        Ks: Optional[torch.Tensor],  # (batch, cameras, 3, 3)
         predicted_d: Optional[torch.Tensor] = None,  # (batch, seqlen, 1 or 2)
-        debug: bool = False,
-        positions_collector: Optional[dict] = None,
+        predicted_d_kv: Optional[torch.Tensor] = None,  # (batch, seqlen, 1 or 2)
+        # debug: bool = False,
+        # positions_collector: Optional[dict] = None,
     ) -> list[Callable[[torch.Tensor], torch.Tensor]]:
         """Prepare transforms for PRoPE-style positional encoding."""
-        (batch, num_cameras, _, _) = w2cs.shape
+        # (batch, num_cameras, _, _) = w2cs.shape
+        batch = self.batch
+        num_cameras = self.num_cameras
+        num_cameras_kv = self.num_cameras_kv
         patches_x = self.patches_x
         patches_y = self.patches_y
         num_rays_per_patch = self.num_rays_per_patch
         num_patches = patches_x * patches_y
 
-        depths = _prepare_depths(predicted_d, self.context_depths, self.depth_type, 
+        depths = _prepare_depths(predicted_d, None, self.depth_type, 
                 batch=batch, num_cameras=num_cameras, num_patches=num_patches, 
                 patches_x=patches_x, patches_y=patches_y, 
                 num_rays_per_patch=num_rays_per_patch, offsets=self.offsets)
-    
-    
+        depths_kv = _prepare_depths(predicted_d_kv, self.context_depths, self.depth_type, 
+                batch=batch, num_cameras=num_cameras_kv, num_patches=num_patches, 
+                patches_x=patches_x, patches_y=patches_y, 
+                num_rays_per_patch=num_rays_per_patch, offsets=self.offsets)
+        
         pd_world = _get_point_coords(self.P_inv, patches_x, patches_y, self.offsets, depths) # (2, batch, num_cameras, num_patches, num_rays_per_patch, 4)
+        pd_world_kv = _get_point_coords(self.P_inv_kv, patches_x, patches_y, self.offsets, depths_kv) # (2, batch, num_cameras_kv, num_patches, num_rays_per_patch, 4)
 
         positions_Q = defaultdict(list)
-        if positions_collector is not None:
-            positions_collector["KV"] = []
+        # if positions_collector is not None:
+        #     positions_collector["KV"] = []
         all_apply_fns_kv = []
         for cam_idx in range(num_cameras):
             positions_KV = {}
@@ -363,67 +319,88 @@ class RayRoPE_Release_DotProductAttention(torch.nn.Module):
             if self.p0_type == '3d':
                 p0_3d = _transform_to_query_frame(self.p0_world, P_q, w2c_q, self.p0_type, self.denc_type)
                 p0_3d = p0_3d.flatten(-2, -1)
-                positions_KV['p0'] = p0_3d
                 positions_Q['p0'].append(p0_3d[:, cam_idx])
+
+                p0_3d_kv = _transform_to_query_frame(self.p0_world_kv, P_q, w2c_q, self.p0_type, self.denc_type)
+                p0_3d_kv = p0_3d_kv.flatten(-2, -1)
+                positions_KV['p0'] = p0_3d_kv
+                
             elif self.p0_type == 'pj':
                 p0_dir, p0_d = _transform_to_query_frame(self.p0_world, P_q, w2c_q, self.p0_type, self.denc_type)
                 p0_dir = p0_dir[..., :2].flatten(-2, -1)
                 p0_d = p0_d.flatten(-2, -1)
-                positions_KV['p0_dir'] = p0_dir
                 positions_Q['p0_dir'].append(p0_dir[:, cam_idx])
+
+                p0_dir_kv, p0_d_kv = _transform_to_query_frame(self.p0_world_kv, P_q, w2c_q, self.p0_type, self.denc_type)
+                p0_dir_kv = p0_dir_kv[..., :2].flatten(-2, -1)
+                p0_d_kv = p0_d_kv.flatten(-2, -1)
+                positions_KV['p0_dir'] = p0_dir_kv
+                
                 if self.denc_type == 'inv_d':
-                    positions_KV['p0_disparity'] = p0_d
+                    positions_KV['p0_disparity'] = p0_d_kv
                     positions_Q['p0_disparity'].append(p0_d[:, cam_idx])
                 elif self.denc_type == 'd':
-                    positions_KV['p0_depth'] = p0_d
+                    positions_KV['p0_depth'] = p0_d_kv
                     positions_Q['p0_depth'].append(p0_d[:, cam_idx])
                 elif self.denc_type == 'asinh_d':
-                    positions_KV['p0_asinh_depth'] = p0_d
+                    positions_KV['p0_asinh_depth'] = p0_d_kv
                     positions_Q['p0_asinh_depth'].append(p0_d[:, cam_idx])
 
             # points at infinity
             if self.pinf_type == '3d':
                 pinf_3d = _transform_to_query_frame(self.pinf_world, P_q, w2c_q, self.pinf_type, self.denc_type, norm_by='length')
                 pinf_3d = pinf_3d.flatten(-2, -1)
-                positions_KV['pinf_dir'] = pinf_3d
                 positions_Q['pinf_dir'].append(pinf_3d[:, cam_idx])
+
+                pinf_3d_kv = _transform_to_query_frame(self.pinf_world_kv, P_q, w2c_q, self.pinf_type, self.denc_type, norm_by='length')
+                pinf_3d_kv = pinf_3d_kv.flatten(-2, -1)
+                positions_KV['pinf_dir'] = pinf_3d_kv
+                
             elif self.pinf_type == 'pj':
                 pinf_dir, _ = _transform_to_query_frame(self.pinf_world, P_q, w2c_q, self.pinf_type, self.denc_type)
                 pinf_dir = pinf_dir.flatten(-2, -1)
-                positions_KV['pinf_dir'] = pinf_dir
                 positions_Q['pinf_dir'].append(pinf_dir[:, cam_idx])
+
+                pinf_dir_kv, _ = _transform_to_query_frame(self.pinf_world_kv, P_q, w2c_q, self.pinf_type, self.denc_type)
+                pinf_dir_kv = pinf_dir_kv.flatten(-2, -1)
+                positions_KV['pinf_dir'] = pinf_dir_kv
+                
                 # no need to include depth here
 
             # points at depth
             if self.pd_type == '3d':
                 pd_3d = _transform_to_query_frame(pd_world, P_q, w2c_q, self.pd_type, self.denc_type)
                 pd_3d = pd_3d.flatten(0, 1).flatten(-2, -1)
-                positions_KV['pd_3d'] = pd_3d
                 positions_Q['pd_3d'].append(pd_3d[:, cam_idx])
+
+                pd_3d_kv = _transform_to_query_frame(pd_world_kv, P_q, w2c_q, self.pd_type, self.denc_type)
+                pd_3d_kv = pd_3d_kv.flatten(0, 1).flatten(-2, -1)
+                positions_KV['pd_3d'] = pd_3d_kv
             elif self.pd_type == 'pj':
                 pd_dir, pd_d = _transform_to_query_frame(pd_world, P_q, w2c_q, self.pd_type, self.denc_type)
                 pd_dir = pd_dir.flatten(0, 1)[..., :2].flatten(start_dim=-2, end_dim=-1)
                 pd_d = pd_d.flatten(0, 1).flatten(start_dim=-2, end_dim=-1)
-                positions_KV['pd_dir'] = pd_dir
                 positions_Q['pd_dir'].append(pd_dir[:, cam_idx])
+
+                pd_dir_kv, pd_d_kv = _transform_to_query_frame(pd_world_kv, P_q, w2c_q, self.pd_type, self.denc_type)
+                pd_dir_kv = pd_dir_kv.flatten(0, 1)[..., :2].flatten(start_dim=-2, end_dim=-1)
+                pd_d_kv = pd_d_kv.flatten(0, 1).flatten(start_dim=-2, end_dim=-1)
+                positions_KV['pd_dir'] = pd_dir_kv
+                
                 if self.denc_type == 'inv_d':
-                    positions_KV['pd_disparity'] = pd_d
+                    positions_KV['pd_disparity'] = pd_d_kv
                     positions_Q['pd_disparity'].append(pd_d[:, cam_idx])
                 elif self.denc_type == 'd':
-                    positions_KV['pd_depth'] = pd_d
+                    positions_KV['pd_depth'] = pd_d_kv
                     positions_Q['pd_depth'].append(pd_d[:, cam_idx])
                 elif self.denc_type == 'asinh_d':
-                    positions_KV['pd_asinh_depth'] = pd_d
+                    positions_KV['pd_asinh_depth'] = pd_d_kv
                     positions_Q['pd_asinh_depth'].append(pd_d[:, cam_idx])
 
-            if positions_collector is not None:
-                # combined_positions = _clone_position_dict(self.positions_KV_common[cam_idx])
-                # combined_positions.update(_clone_position_dict(positions_KV))
-                positions_collector["KV"].append(positions_KV)
+            # if positions_collector is not None:
+            #     positions_collector["KV"].append(positions_KV)
 
             cos_KV, sin_KV = _prepare_rope_coeff_uniformd(positions_KV, self.num_rope_freqs, self.freq_base, batch, num_cameras, num_patches) # (batch, num_cameras, num_patches, num_freqs, num_coord)
-            # cos_KV = torch.concat([self.cos_KV_common[cam_idx], cos_KV], dim=-1)
-            # sin_KV = torch.concat([self.sin_KV_common[cam_idx], sin_KV], dim=-1)
 
             apply_fn_kv = partial(_apply_rope_coeffs, cos=cos_KV, sin=sin_KV, inverse=True)
             
@@ -454,14 +431,10 @@ class RayRoPE_Release_DotProductAttention(torch.nn.Module):
         for key, val in positions_Q.items():
             positions_Q[key] = torch.stack(val, dim=1)  # (batch, num_cameras, num_patches, ...)
 
-        if positions_collector is not None:
-            # combined_Q = _clone_position_dict(self.positions_Q_common)
-            # combined_Q.update(_clone_position_dict(positions_Q))
-            positions_collector["Q"] = positions_Q
+        # if positions_collector is not None:
+        #     positions_collector["Q"] = positions_Q
 
         cos_Q, sin_Q = _prepare_rope_coeff_uniformd(positions_Q, self.num_rope_freqs, self.freq_base, batch, num_cameras, num_patches)
-        # cos_Q = torch.concat([self.cos_Q_common, cos_Q], dim=-1)
-        # sin_Q = torch.concat([self.sin_Q_common, sin_Q], dim=-1)
         apply_fn_q = partial(_apply_rope_coeffs, cos=cos_Q, sin=sin_Q, inverse=True)
         apply_fn_o = partial(_apply_rope_coeffs, cos=cos_Q, sin=sin_Q, inverse=False)
 
@@ -469,10 +442,6 @@ class RayRoPE_Release_DotProductAttention(torch.nn.Module):
         #     raise ValueError("NaN/inf values found in rope_matrices_Q.")
 
         return apply_fn_q, all_apply_fns_kv, apply_fn_o
-
-
-def _clone_position_dict(position_dict: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
-    return {key: value.detach().clone() for key, value in position_dict.items()}
 
 
 def _transform_to_query_frame(
@@ -655,7 +624,7 @@ def _prepare_depths(
     
     if torch.isnan(depths).any() or torch.isinf(depths).any():
         raise ValueError("NaN/inf values found in predicted depths.")
-    if 'known' in depth_type:
+    if 'known' in depth_type and context_depths is not None:
         num_contexts = context_depths.shape[1]
         context_depths_sampled = _sample_depth_map(
             context_depths, patches_x, patches_y, offsets=offsets
@@ -829,6 +798,16 @@ def _invert_K(Ks: torch.Tensor) -> torch.Tensor:
     out[..., 1, 2] = -Ks[..., 1, 2] / Ks[..., 1, 1]
     out[..., 2, 2] = 1.0
     return out
+
+def normalize_K(Ks: torch.Tensor, image_width: int, image_height: int) -> torch.Tensor:
+    """Normalize camera intrinsics."""
+    Ks_norm = torch.zeros_like(Ks)
+    Ks_norm[..., 0, 0] = Ks[..., 0, 0] / image_width
+    Ks_norm[..., 1, 1] = Ks[..., 1, 1] / image_height
+    Ks_norm[..., 0, 2] = Ks[..., 0, 2] / image_width - 0.5
+    Ks_norm[..., 1, 2] = Ks[..., 1, 2] / image_height - 0.5
+    Ks_norm[..., 2, 2] = 1.0
+    return Ks_norm
 
 def _clamp_zero(tensor: torch.Tensor, min_abs_value: float = 1e-4) -> torch.Tensor:
     # Get the sign of the input.

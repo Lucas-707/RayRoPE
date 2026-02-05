@@ -360,8 +360,8 @@ class _Co3dBaseDataset(Dataset):
         patch_size: int,
         depth_size: Optional[int],
         co3d_dir: Optional[str],
-        co3d_annotation_dir: Optional[str],
-        co3d_depth_dir: Optional[str],
+        annotation_dir: Optional[str],
+        depth_dir: Optional[str],
         load_depth: bool,
     ) -> None:
         super().__init__()
@@ -370,15 +370,15 @@ class _Co3dBaseDataset(Dataset):
         self.load_depth = load_depth
 
         self.co3d_dir = co3d_dir or CO3D_DIR
-        self.co3d_annotation_dir = co3d_annotation_dir or CO3D_ANNOTATION_DIR
-        self.co3d_depth_dir = co3d_depth_dir or CO3D_DEPTH_DIR
+        self.annotation_dir = annotation_dir or CO3D_ANNOTATION_DIR
+        self.depth_dir = depth_dir or CO3D_DEPTH_DIR
 
-        if self.co3d_dir is None or self.co3d_annotation_dir is None:
+        if self.co3d_dir is None or self.annotation_dir is None:
             raise RuntimeError("CO3D dataset paths are not configured.")
-        if self.load_depth and self.co3d_depth_dir is None:
+        if self.load_depth and self.depth_dir is None:
             raise RuntimeError("Depth loading requested but depth directory is unset.")
 
-        self.store = _Co3dSequenceStore(categories, split, self.co3d_annotation_dir, min_frames=2)
+        self.store = _Co3dSequenceStore(categories, split, self.annotation_dir, min_frames=2)
 
     def __len__(self) -> int:
         return len(self.store.sequence_list)
@@ -396,7 +396,7 @@ class _Co3dBaseDataset(Dataset):
 
     def _load_depth(self, category: str, sequence_name: str, filepath: str) -> np.ndarray:
         depth_file = osp.basename(filepath).replace(".jpg", ".jpg.geometric.png")
-        depth_path = osp.join(self.co3d_depth_dir, category, sequence_name, "depths", depth_file)
+        depth_path = osp.join(self.depth_dir, category, sequence_name, "depths", depth_file)
         depth_image = Image.open(depth_path)
         raw = np.frombuffer(np.array(depth_image, dtype=np.uint16), dtype=np.float16).astype(np.float32)
         depth = raw.reshape((depth_image.size[1], depth_image.size[0]))
@@ -523,8 +523,8 @@ class Co3dTrainDataset(_Co3dBaseDataset):
         max_frame_dist: int = 100,
         load_depth: bool = False,
         co3d_dir: Optional[str] = None,
-        co3d_annotation_dir: Optional[str] = None,
-        co3d_depth_dir: Optional[str] = None,
+        annotation_dir: Optional[str] = None,
+        depth_dir: Optional[str] = None,
     ) -> None:
         if isinstance(categories, str):
             categories = [categories]
@@ -544,8 +544,8 @@ class Co3dTrainDataset(_Co3dBaseDataset):
             patch_size=patch_size,
             depth_size=depth_size,
             co3d_dir=co3d_dir,
-            co3d_annotation_dir=co3d_annotation_dir,
-            co3d_depth_dir=co3d_depth_dir,
+            annotation_dir=annotation_dir,
+            depth_dir=depth_dir,
             load_depth=load_depth,
         )
 
@@ -705,8 +705,8 @@ class Co3dEvalDataset(_Co3dBaseDataset):
         input_views: int = 2,
         load_depth: bool = False,
         co3d_dir: Optional[str] = None,
-        co3d_annotation_dir: Optional[str] = None,
-        co3d_depth_dir: Optional[str] = None,
+        annotation_dir: Optional[str] = None,
+        depth_dir: Optional[str] = None,
         first_n: Optional[int] = None,
         render_video: bool = False,
     ) -> None:
@@ -731,8 +731,8 @@ class Co3dEvalDataset(_Co3dBaseDataset):
             patch_size=patch_size,
             depth_size=depth_size,
             co3d_dir=co3d_dir,
-            co3d_annotation_dir=co3d_annotation_dir,
-            co3d_depth_dir=co3d_depth_dir,
+            annotation_dir=annotation_dir,
+            depth_dir=depth_dir,
             load_depth=load_depth,
         )
         self.render_video = render_video

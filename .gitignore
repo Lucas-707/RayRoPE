@@ -4,6 +4,7 @@ assets/*.safetensors
 compile_commands.json
 *.out
 *.log
+rayrope_out/
 
 
 # Visual Studio Code configs.

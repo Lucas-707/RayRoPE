@@ -9,8 +9,8 @@ from pos_enc.timing_utils import time_block
 from torch.profiler import profile, record_function, ProfilerActivity
 
 
-class Global_RayRoPE_DotProductAttention(torch.nn.Module):
-    """Patch-RoPE attention with precomputed RoPE coefficients."""
+class RoPE_GlobalRay_DotProductAttention(torch.nn.Module):
+    """ Attention with multi-frequency RoPE on 6D rays in global coordinate system."""
 
     def __init__(
         self,
@@ -19,7 +19,6 @@ class Global_RayRoPE_DotProductAttention(torch.nn.Module):
         patches_y: int,
         image_width: int,
         image_height: int,
-        rope_transform_type: str = 'none', # none or cayley or cayley_randn.
         pos_enc_type: str = 'global-0+inf', # global-0+inf, global-0+d
         num_rays_per_patch: int = 3,
         freq_base: float = 3.0,
@@ -56,16 +55,14 @@ class Global_RayRoPE_DotProductAttention(torch.nn.Module):
         q: torch.Tensor,  # (batch, num_heads, seqlen, head_dim)
         k: torch.Tensor,  # (batch, num_heads, seqlen, head_dim)
         v: torch.Tensor,  # (batch, num_heads, seqlen, head_dim)
-        viewmats: torch.Tensor,  # (batch, cameras, 4, 4)
-        Ks: Optional[torch.Tensor],  # (batch, cameras, 3, 3)
         timing_enabled: bool = False,
         **kwargs,
     ) -> torch.Tensor:
-        return frope_dot_product_attention(
+        return rayrope_dot_product_attention(
             q,
             k,
             v,
-            num_cameras=viewmats.shape[1],
+            num_cameras=self.cameras,
             apply_fn_q=self.apply_fn_q,
             apply_fn_kv=self.apply_fn_kv,
             apply_fn_o=self.apply_fn_o,
@@ -75,18 +72,18 @@ class Global_RayRoPE_DotProductAttention(torch.nn.Module):
 
     def _precompute_and_cache_apply_fns(
         self, 
-        viewmats: torch.Tensor, 
+        w2cs: torch.Tensor, 
         Ks: Optional[torch.Tensor],
         context_depths: Optional[torch.Tensor] = None,
     ):
-        (batch, cameras, _, _) = viewmats.shape
-        assert viewmats.shape == (batch, cameras, 4, 4)
+        (batch, cameras, _, _) = w2cs.shape
+        assert w2cs.shape == (batch, cameras, 4, 4)
         assert Ks is None or Ks.shape == (batch, cameras, 3, 3)
         self.cameras = cameras
 
         self.apply_fn_q, self.apply_fn_kv, self.apply_fn_o = _prepare_apply_fns(
             head_dim=self.head_dim,
-            w2cs=viewmats,
+            w2cs=w2cs,
             Ks=Ks,
             patches_x=self.patches_x,
             patches_y=self.patches_y,
@@ -103,7 +100,7 @@ class Global_RayRoPE_DotProductAttention(torch.nn.Module):
         )
 
 
-def frope_dot_product_attention(
+def rayrope_dot_product_attention(
     q: torch.Tensor,  # (batch, num_heads, seqlen, head_dim)
     k: torch.Tensor,  # (batch, num_heads, seqlen, head_dim)
     v: torch.Tensor,  # (batch, num_heads, seqlen, head_dim)

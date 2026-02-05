@@ -33,10 +33,8 @@ export TORCHINDUCTOR_FORCE_RECOMPILE=1
 # Defaults
 DATASET="co3d"
 RAY_ENCODING="camray"
-POS_ENC="prope"
-ROPE_T_TYPE="none"
-P0_TYPE="ex3d"
-DEPTH_TYPE="none"
+POS_ENC="d_pj+0_3d"
+DEPTH_TYPE="predict_dsig"
 DENC_TYPE="inv_d"
 INIT_D=0.0
 INIT_SIG=3.0
@@ -67,8 +65,6 @@ while [[ $# -gt 0 ]]; do
     --dataset) DATASET="$2"; shift 2 ;;
     --ray_encoding) RAY_ENCODING="$2"; shift 2 ;;
     --pos_enc) POS_ENC="$2"; shift 2 ;;
-    --rope_t_type) ROPE_T_TYPE="$2"; shift 2 ;;
-    --p0_type) P0_TYPE="$2"; shift 2 ;;
     --depth_type) DEPTH_TYPE="$2"; shift 2 ;;
     --denc_type) DENC_TYPE="$2"; shift 2 ;;
     --init_d) INIT_D="$2"; shift 2 ;;
@@ -87,6 +83,7 @@ while [[ $# -gt 0 ]]; do
     --bg_loss_w) BG_LOSS_W="$2"; shift 2 ;;
     --test) TEST=true; shift 1 ;;
     --test-render-video) TEST_RENDER_VIDEO=true; shift 1 ;;
+    --test-render-view) TEST_RENDER_VIEW=true; shift 1 ;;
     --test-rad-sph) TEST_RAD_SPH=true; shift 1 ;;
     --test-unseen) TEST_UNSEEN=true; shift 1 ;;
     --category) CATEGORY="$2"; shift 2 ;;
@@ -94,7 +91,54 @@ while [[ $# -gt 0 ]]; do
     --test-zoom-in) TEST_ZOOM_IN="$2"; shift 2 ;;
     --test-ckpt) TEST_CKPT="$2"; shift 2 ;;
     --pdb) PDB_MODE=true; shift 1 ;;
-    -h|--help) echo "Usage: $0 --dataset <re10k|objaverse|co3d> [options]"; exit 0 ;;
+    -h|--help)
+      echo "Usage: $0 [options]"
+      echo ""
+      echo "LVSM training and testing script."
+      echo ""
+      echo "Dataset Options:"
+      echo "  --dataset <name>          Dataset to use: re10k, objaverse, or co3d (default: co3d)"
+      echo "  --category <name>         CO3D category: 'seen' or specific category name (default: seen)"
+      echo ""
+      echo "Positional Encoding Options:"
+      echo "  --pos_enc <type>          Positional encoding type: prope, d_pj+0_3d (RayRoPE), etc. (default: d_pj+0_3d)"
+      echo "  --ray_encoding <type>     Ray encoding type (default: camray)"
+      echo "  --freq_base <float>       Frequency base for encoding (default: 3.0)"
+      echo "  --num_rays <int>          Number of rays per patch (default: 3)"
+      echo "  --disable_vo              Disable encoding on value/output features"
+      echo ""
+      echo "Depth Options:"
+      echo "  --depth_type <type>       Depth type: none, predict_dsig, etc. (default: predict_dsig)"
+      echo "  --denc_type <type>        Depth encoding type (default: inv_d)"
+      echo "  --init_d <float>          Initial log-depth value (default: 0.0)"
+      echo "  --init_sig <float>        Initial sigma value (default: 3.0)"
+      echo "  --input_depth             Use known depth as input"
+      echo ""
+      echo "Model Architecture Options:"
+      echo "  --model_dim <int>         Model dimension (default: 1152)"
+      echo "  --nhead <int>             Number of attention heads (default: 8)"
+      echo "  --num_layers <int>        Number of transformer layers (default: 6)"
+      echo "  --dim_feedforward <int>   Feedforward dimension (default: 1024)"
+      echo ""
+      echo "Training Options:"
+      echo "  --batch <int>             Batch size per GPU (default: 4)"
+      echo "  --seed <int>              Random seed (default: 1)"
+      echo "  --p_loss_w <float>        Perceptual loss weight (default: 0.5)"
+      echo "  --bg_loss_w <float>       Background loss weight (default: 1.0)"
+      echo ""
+      echo "Testing Options:"
+      echo "  --test                    Run evaluation only"
+      echo "  --test-unseen             Test on unseen categories (CO3D only)"
+      echo "  --test-render-video       Render video outputs during testing"
+      echo "  --test-render-view        Render single view outputs during testing"
+      echo "  --test-rad-sph            Test on radial and spherical splits"
+      echo "  --test-context-views <n>  Test with specific number of context views"
+      echo "  --test-zoom-in <factors>  Test with zoom factors (space-separated)"
+      echo "  --test-ckpt <path>        Path to checkpoint for testing"
+      echo ""
+      echo "Debug Options:"
+      echo "  --pdb                     Enable PDB debugging mode"
+      exit 0 ;;
     *) echo "Unknown option $1"; exit 1 ;;
   esac
 done
@@ -106,7 +150,6 @@ EFFECTIVE_BATCH_SIZE=$((BATCH_SIZE * NGPUS))
 MODEL_CONFIG="L${NUM_LAYERS}-H${NHEAD}-D${MODEL_DIM}-FF${DIM_FEEDFORWARD}-B${EFFECTIVE_BATCH_SIZE}"
 
 NAME="${POS_ENC}"
-[[ "$P0_TYPE" != "ex3d" ]] && NAME="${NAME}-p0${P0_TYPE}"
 [[ $NUM_RAYS != 3 ]] && NAME="${NAME}-${NUM_RAYS}ray"
 [[ "$DEPTH_TYPE" != "none" ]] && NAME="${NAME}-${DEPTH_TYPE}"
 [[ "$INIT_D" != "0.0" ]] && NAME="${NAME}-initd${INIT_D}"
@@ -115,7 +158,6 @@ NAME="${POS_ENC}"
 [[ "$INPUT_DEPTH" == "true" ]] && NAME="${NAME}-indepth"
 [[ $FREQ_BASE != 3.0 ]] && NAME="${NAME}-fb${FREQ_BASE}"
 [[ "$DISABLE_VO" == "true" ]] && NAME="${NAME}-no_vo"
-[[ "$ROPE_T_TYPE" != "none" ]] && NAME="${NAME}-${ROPE_T_TYPE}"
 [[ "$RAY_ENCODING" != "camray" ]] && NAME="${NAME}-${RAY_ENCODING}"
 [[ $P_LOSS_W != 0.5 ]] && NAME="${NAME}-pw${P_LOSS_W}"
 [[ $BG_LOSS_W != 1.0 ]] && NAME="${NAME}-bgw${BG_LOSS_W}"
@@ -168,10 +210,7 @@ BASE_CMD+=(
   "--max_steps ${MAX_STEPS} --test_every ${TEST_EVERY}"
   "--model_config.ray_encoding ${RAY_ENCODING}"
   "--model_config.pos_enc ${POS_ENC}"
-  "--model_config.p0_type ${P0_TYPE}"
   "--model_config.depth_type ${DEPTH_TYPE}"
-  "--model_config.cam_transform_type none"
-  "--model_config.rope_transform_type ${ROPE_T_TYPE}"
   "--model_config.freq_base ${FREQ_BASE}"
   "--model_config.num_rays_per_patch ${NUM_RAYS}"
   "--seed ${SEED}"
@@ -182,7 +221,11 @@ BASE_CMD+=(
 [[ "$DISABLE_VO" == "true" ]] && BASE_CMD+=("--model_config.disable_vo")
 [[ "$TEST_UNSEEN" == "true" && "$DATASET" == "co3d" ]] && BASE_CMD+=("--co3d_test_unseen")
 [[ "$BG_LOSS_W" != "1.0" ]] && BASE_CMD+=("--get_mask")
-``
+
+if [ -n "$TEST_CKPT" ]; then
+  BASE_CMD+=("--overwrite_ckpt_dir ${TEST_CKPT}")
+fi
+
 # Execution
 if [ -n "$TEST_ZOOM_IN" ]; then
   for zoom in $TEST_ZOOM_IN; do
@@ -221,10 +264,6 @@ elif [ "$TEST_RENDER_VIEW" == "true" ]; then
 elif [ "$TEST_RAD_SPH" == "true" ]; then
   echo "Testing on radial and spherical splits..."
   CMD=("${BASE_CMD[@]}" "--test_only --auto_resume --test_rad_sph")
-  eval "${CMD[@]} $REDIRECT"
-elif [ -n "$TEST_CKPT" ]; then
-  echo "Testing ckpt: ${TEST_CKPT}..."
-  CMD=("${BASE_CMD[@]}" "--test_only --auto_resume" "--overwrite_ckpt_dir ${TEST_CKPT}")
   eval "${CMD[@]} $REDIRECT"
 elif [ "$TEST" == "true" ]; then
   echo "Testing..."

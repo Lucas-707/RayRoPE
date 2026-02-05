@@ -6,7 +6,7 @@ from einops import rearrange
 from torch import Tensor
 from torch.nn.init import constant_, xavier_uniform_
 from torch.nn.parameter import Parameter
-from pos_enc.timing_utils import time_block
+# from pos_enc.timing_utils import time_block
 
 
 # src: https://github.com/pytorch/benchmark/blob/main/torchbenchmark/models/llama/model.py#L28
@@ -30,6 +30,21 @@ class MultiheadAttention(torch.nn.Module):
     Same as torch.nn.MultiheadAttention for bidirectional attention, but supports:
     - RMSNorm
     - customized attention function
+    - predicting depth and uncertainty for RayRoPE
+        - depth and sigma are predicted by a linear projection from the token features.
+        - One depth (and sigma) value is predicted per token, shared across all heads.
+        - The raw predicted values are treated as log depth and log sigma (see _prepare_depths() in rayrope.py):
+            max_d = exp(raw_d + raw_sigma)
+            min_d = exp(raw_d - raw_sigma)
+
+    Args:
+        predict_d:
+            'none': do not predict depth
+            'predict_d': predict depth only
+            'predict_dsig': predict depth and uncertainty (sigma)
+        init_depth: initial value of log-depth
+        init_sigma: initial value of log-sigma
+        
     """
 
     def __init__(
@@ -42,6 +57,7 @@ class MultiheadAttention(torch.nn.Module):
         predict_d : str = 'none', # none, predict_d, predict_dsig
         init_depth: float = 0.0,
         init_sigma: float = 3.0,
+        sdpa_fn: Optional[Callable] = F.scaled_dot_product_attention,
     ):
         super().__init__()
         self.embed_dim = embed_dim
@@ -51,6 +67,7 @@ class MultiheadAttention(torch.nn.Module):
         self.dropout = dropout
         self.bias = bias
         self.qk_norm = qk_norm
+        self.sdpa_fn = sdpa_fn
 
         self.in_proj_weight = Parameter(torch.empty((3 * embed_dim, embed_dim)))
 
@@ -85,17 +102,13 @@ class MultiheadAttention(torch.nn.Module):
             constant_(self.in_proj_bias, 0.0)
             constant_(self.out_proj.bias, 0.0)
         
-        # if self.predict_d != 'none':
-        #     constant_(self.d_proj_weight, 0.0)
-        # if self.predict_d == 'predict_d':
-        #     constant_(self.d_proj_bias, 0.0)
 
     def forward(
         self,
         query: Tensor,
         key: Tensor,
         value: Tensor,
-        sdpa_fn: Callable = F.scaled_dot_product_attention,
+        sdpa_fn: Callable = None, # override self.sdpa_fn if needed
     ) -> Tensor:
         """
         Args:
@@ -106,43 +119,46 @@ class MultiheadAttention(torch.nn.Module):
         Returns:
             output: (B, T, D)
         """
-        with time_block("mha_total", enabled=False):
-            with time_block("get_features", enabled=False):
-                if self.predict_d != 'none':
-                    raw_d = F.linear(query, self.d_proj_weight, self.d_proj_bias)
-                    # predicted_d = torch.exp(log_d) # (B, T, 1) or (B, T, 2)
-                    # print(f"predicted logd max/min: {log_d.max()}/{log_d.min()}, predicted d max/min: {predicted_d.max()}/{predicted_d.min()}")
-                    
-                q_proj_weight, k_proj_weight, v_proj_weight = self.in_proj_weight.chunk(
-                    3, dim=0
-                )
-                if self.in_proj_bias is not None:
-                    q_proj_bias, k_proj_bias, v_proj_bias = self.in_proj_bias.chunk(3, dim=0)
-                else:
-                    q_proj_bias = k_proj_bias = v_proj_bias = None
+        # with time_block("mha_total", enabled=False):
+            # with time_block("get_features", enabled=False):
+        if sdpa_fn is None:
+            sdpa_fn = self.sdpa_fn
 
-                q = F.linear(query, q_proj_weight, q_proj_bias)
-                k = F.linear(key, k_proj_weight, k_proj_bias)
-                v = F.linear(value, v_proj_weight, v_proj_bias)
-                q, k, v = (
-                    rearrange(x, "b t (h c) -> b t h c", h=self.num_heads) for x in [q, k, v]
-                )
-                if self.qk_norm:
-                    q = self.q_norm(q)
-                    k = self.k_norm(k)
-                q, k, v = (rearrange(x, "b t h c -> b h t c") for x in [q, k, v])
-
-            if self.predict_d != 'none':
-                o = sdpa_fn(q, k, v, dropout_p=self.dropout if self.training else 0.0,
-                            predicted_d=raw_d)
-            else:
-                o = sdpa_fn(q, k, v, dropout_p=self.dropout if self.training else 0.0)
+        if self.predict_d != 'none':
+            raw_d = F.linear(query, self.d_proj_weight, self.d_proj_bias)
+            # predicted_d = torch.exp(log_d) # (B, T, 1) or (B, T, 2)
+            # print(f"predicted logd max/min: {log_d.max()}/{log_d.min()}, predicted d max/min: {predicted_d.max()}/{predicted_d.min()}")
             
-            with time_block("get_features", enabled=True):
-                o = rearrange(o, "b h t c -> b t (h c)", h=self.num_heads)
-                attn_output = F.linear(o, self.out_proj.weight, self.out_proj.bias)
+        q_proj_weight, k_proj_weight, v_proj_weight = self.in_proj_weight.chunk(
+            3, dim=0
+        )
+        if self.in_proj_bias is not None:
+            q_proj_bias, k_proj_bias, v_proj_bias = self.in_proj_bias.chunk(3, dim=0)
+        else:
+            q_proj_bias = k_proj_bias = v_proj_bias = None
 
-            return attn_output
+        q = F.linear(query, q_proj_weight, q_proj_bias)
+        k = F.linear(key, k_proj_weight, k_proj_bias)
+        v = F.linear(value, v_proj_weight, v_proj_bias)
+        q, k, v = (
+            rearrange(x, "b t (h c) -> b t h c", h=self.num_heads) for x in [q, k, v]
+        )
+        if self.qk_norm:
+            q = self.q_norm(q)
+            k = self.k_norm(k)
+        q, k, v = (rearrange(x, "b t h c -> b h t c") for x in [q, k, v])
+
+        if self.predict_d != 'none':
+            o = sdpa_fn(q, k, v, dropout_p=self.dropout if self.training else 0.0,
+                        predicted_d=raw_d)
+        else:
+            o = sdpa_fn(q, k, v, dropout_p=self.dropout if self.training else 0.0)
+        
+        # with time_block("get_features", enabled=True):
+        o = rearrange(o, "b h t c -> b t (h c)", h=self.num_heads)
+        attn_output = F.linear(o, self.out_proj.weight, self.out_proj.bias)
+
+        return attn_output
 
 
 if __name__ == "__main__":

@@ -714,7 +714,7 @@ class LVSMLauncher(Launcher):
                             write_tensor_to_image(output_v, f"{self.test_dir}/{scene_name}/gen{v}.png")
 
                         # save the predicted depth visuals (per scene)
-                        visualize_predict_d = True
+                        visualize_predict_d = False
                         if visualize_predict_d:
                             # Get stored depth maps from model.attention
                             predicted_depth_maps = model.attention.predicted_depth_maps

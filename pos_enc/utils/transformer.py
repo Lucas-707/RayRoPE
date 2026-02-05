@@ -16,7 +16,7 @@ from torch import Tensor
 from torch.nn import Dropout, LayerNorm, Linear, Module, ModuleList, Sequential
 
 from .config import InstantiateConfig
-from .mha import MultiheadAttention
+from .rayrope_mha import MultiheadAttention
 
 __all__ = [
     "TransformerEncoderConfig",

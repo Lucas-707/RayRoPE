@@ -12,9 +12,9 @@ from einops import rearrange, repeat
 from torch import Tensor
 
 from pos_enc.xy_rope import xyRopeDotProductAttention
-from pos_enc.ray_rope_release import RayRoPE_Release_DotProductAttention
-from pos_enc.ray_rope_release_nosig import RayRoPE_NoSig_DotProductAttention
-from pos_enc.ray_rope_global import Global_RayRoPE_DotProductAttention
+from pos_enc.rayrope import RayRoPE_DotProductAttention
+from pos_enc.rayrope_nosig import RayRoPE_NoSig_DotProductAttention
+from pos_enc.rope_global_ray import RoPE_GlobalRay_DotProductAttention
 from pos_enc.timing_utils import time_block
 
 from pos_enc.prope import PropeDotProductAttention
@@ -69,10 +69,9 @@ class LVSMDecoderOnlyModelConfig:
     # How the input rays are encoded.
     ray_encoding: Literal["plucker", "camray", "none", "raymap"] = "plucker"
 
-    pos_enc: str = "prope"
+    pos_enc: str = "d_pj+0_3d"
     num_rays_per_patch: int = 3
     freq_base: float = 3.0
-    p0_type: Literal["in3d", "ex3d", "in2d"] = "ex3d"
     disable_vo: bool = False
     depth_type: str = "none"
     init_d: float = 0.0
@@ -80,8 +79,6 @@ class LVSMDecoderOnlyModelConfig:
     
     denc_type: str = "d"  # "d" or "inv_d" or "asinh_d"
     depth_input: bool = False # concat context depth map to ref input
-    cam_transform_type: Literal["LDU", "none"] = "none"
-    rope_transform_type: Literal["none", "Cayley", "Cayley_randn"] = "none"
     
     # Timing configuration
     timing_enabled: bool = False
@@ -95,7 +92,7 @@ class LVSMDecoderOnlyModel(nn.Module):
         head_dim = config.encoder.layer.d_model // config.encoder.layer.nhead
 
         if self.config.pos_enc in ["global-0+inf", "global-0+d"]:
-            self.attention = Global_RayRoPE_DotProductAttention(
+            self.attention = RoPE_GlobalRay_DotProductAttention(
                 head_dim=head_dim,
                 patches_x=config.img_shape[1] // config.patch_size,
                 patches_y=config.img_shape[0] // config.patch_size,
@@ -103,13 +100,12 @@ class LVSMDecoderOnlyModel(nn.Module):
                 image_height=config.img_shape[0],
                 pos_enc_type=self.config.pos_enc,
                 num_rays_per_patch=self.config.num_rays_per_patch,
-                rope_transform_type=self.config.rope_transform_type,
                 freq_base=self.config.freq_base,
             )
         elif ('d_pj' in self.config.pos_enc or \
             'd_3d' in self.config.pos_enc) and \
             'predict_dsig' in self.config.depth_type:
-            self.attention = RayRoPE_Release_DotProductAttention(
+            self.attention = RayRoPE_DotProductAttention(
                 head_dim=head_dim,
                 patches_x=config.img_shape[1] // config.patch_size,
                 patches_y=config.img_shape[0] // config.patch_size,
@@ -156,7 +152,6 @@ class LVSMDecoderOnlyModel(nn.Module):
                 patches_y=config.img_shape[0] // config.patch_size,
                 image_width=config.img_shape[1],
                 image_height=config.img_shape[0],
-                # freq_type=self.config.cam_transform_type,
             )
 
         assert (
@@ -286,16 +281,12 @@ class LVSMDecoderOnlyModel(nn.Module):
             if self.config.depth_input:
                 inverse_depths = 1.0 / context_depths
                 context_depths_patch = patchify(inverse_depths, config.patch_size)
-                # print(f"after patchify:")
-                # print(f"ref_imgs shape: {ref_imgs.shape}, ref_rays shape: {ref_rays.shape}, context_depths_patch shape: {context_depths_patch.shape}")
 
             # Tokenize into
             # x: [B*V2, V1*N1, DIM1]
             # q: [B*V2, N2, DIM2]
             if self.config.depth_input:
                 x = self.input_tokenizer(torch.cat([ref_imgs, ref_rays, context_depths_patch], dim=-1))
-                # print(f"after input_tokenizer: x shape: {x.shape}")
-                # exit()
             else:
                 x = self.input_tokenizer(torch.cat([ref_imgs, ref_rays], dim=-1))
             x = repeat(x, "b v1 n d -> (b v2) (v1 n) d", v2=v2)
@@ -312,47 +303,30 @@ class LVSMDecoderOnlyModel(nn.Module):
             Ks = torch.cat([ref_Ks, tar_Ks], dim=1)  # [B, N, 3, 3] per camera
             viewmats = torch.inverse(c2ws)
 
-            # cams = {
-            #     'tar_cams': tar_cams,
-            #     'ref_cams': ref_cams,
-            #     'ref_c2ws': ref_c2ws,
-            #     'ref_Ks': ref_Ks,
-            #     'tar_c2ws': tar_c2ws,
-            #     'tar_Ks': tar_Ks,
-            #     'cws': c2ws,
-            #     'Ks': Ks,
-            # }
-            # torch.save(cams, f"logs/debug_tensor/cams.pt")
-            # exit()
-
         with time_block("precompute_enc", enabled=timing_enabled):
-            if "frustum" in config.pos_enc or "fpixel" in config.pos_enc or "fpoint" in config.pos_enc \
-                or "d_pj" in config.pos_enc or "d_3d" in config.pos_enc \
-                or config.pos_enc in ["0+d", "0+inf", "d+inf", "global-0+inf", "global-0+d"]:
-
-                # if "known" in config.depth_type:
-                #     depths_for_rope = repeat(context_depths, "b v1 h w 1 -> (b v2) v1 h w 1", v2=v2)
-                # else:
-                #     depths_for_rope = None
+            if  "0_pj" in config.pos_enc or "0_3d" in config.pos_enc \
+                or config.pos_enc in ["global-0+inf", "global-0+d"]:
 
                 if context_depths is not None:
                     depths_for_rope = repeat(context_depths, "b v1 h w 1 -> (b v2) v1 h w 1", v2=v2)
                 else:
                     depths_for_rope = None
                 self.attention._precompute_and_cache_apply_fns(
-                    viewmats=viewmats, Ks=Ks, context_depths=depths_for_rope
+                    w2cs=viewmats, Ks=Ks, context_depths=depths_for_rope
                 )
 
         def sdpa_fn(q, k, v, **sdpa_kwargs):
             if config.pos_enc == "gta":
                 # GTA is effectively PRoPE without intrinsics.
                 return self.attention(q, k, v, viewmats=viewmats, Ks=None, timing_enabled=timing_enabled, **sdpa_kwargs)
+            elif config.pos_enc == "prope":
+                return self.attention(q, k, v, viewmats=viewmats, Ks=Ks, timing_enabled=timing_enabled, **sdpa_kwargs)
             elif config.pos_enc == "none":
                 # Use the default attention.
                 out = F.scaled_dot_product_attention(q, k, v, **sdpa_kwargs)
                 return out
             else:
-                return self.attention(q, k, v, viewmats=viewmats, Ks=Ks, timing_enabled=timing_enabled, **sdpa_kwargs)
+                return self.attention(q, k, v, timing_enabled=timing_enabled, **sdpa_kwargs)
             
         if config.pos_enc == "none":
             sdpa_fn = F.scaled_dot_product_attention

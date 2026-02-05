@@ -3,7 +3,9 @@
   <img src="./assets/visual/rayrope_title.png" height="80" />
 </p>
 
-[Project Page](https://rayrope.github.io/) | [arXiv](https://arxiv.org/abs/2601.15275v1)
+<h3 align="center">
+  <a href="https://rayrope.github.io/">Project Page</a> | <a href="https://arxiv.org/abs/2601.15275v1">arXiv</a>
+</h3>
 
 This is the official code for paper: RayRoPE: Projective Ray Positional Encoding for Multi-view Attention.
 
@@ -12,22 +14,73 @@ This is the official code for paper: RayRoPE: Projective Ray Positional Encoding
 </p>
 
 ## Updates
+- [02.04.2026] Released model weights for LVSM with RayRoPE
+- [02.04.2026] Update instructions on using RayRoPE. Restructure the code.
 - [01.26.2026] Update code on preparing the datasets (CO3D, RE10K, and Objaverse)
 - [01.26.2026] Update instructions in this README.md
 
-### ToDos
-- Add instruction on the experiment options
+#### ToDos
 - Release code for stereo depth experiments
 
+# Using RayRoPE
 
-## Environment
+Using RayRoPE is easy: all you need are two files: 
+- `pos_enc.rayrope.py`
+- `pos_enc.utils.rayrope_mha.py`
+
+Here is a step-by-step example on incorporating RayRoPE to multi-view self-attention modules:
+
+**1.** Initialize an instance of our encoding class `RayRoPE_DotProductAttention`. 
+
+```python
+from pos_enc.rayrope import RayRoPE_DotProductAttention
+rayrope_attn = RayRoPE_DotProductAttention(...)
+```
+
+The `.forward()` function of this module are meant to replace `torch.nn.functional.scaled_dot_product_attention()`. Please see the docstring in `rayrope.py` for detailed explaination on the options.
+
+**2.** Replace all multi-head attention module with `MultiheadAttention` in `rayrope_mha.py`. This class is the same as `torch.nn.MultiheadAttention`, with additioanl support for customized attention function and depth/uncertainty prediction required in our method. Set the attention function as `rayrope_attn.forward`:
+
+```python
+from pos_enc.utils.rayrope_mha import MultiheadAttention
+mha_layer = MultiheadAttention(..., sdpa_fn=self.rayrope_attn.forward)
+```
+
+**3.** At the beginning of the forward pass of the model, initialize the RayRoPE encodings with input camera poses:
+
+```python
+rayrope_attn._precompute_and_cache_apply_fns(
+    w2cs,  # Input camera extrinsics. shape [B, nC, 4, 4]
+    Ks,    # Input camera intrinsics. shape [B, nC, 3, 3]
+)
+```
+
+**4.** You don't need any specific modification for calling the attention. Calling the `mha_layer` will automatically compute attention with RayRoPE applied. 
+
+**5.** For cross-attention, use the file `pos_enc.rayrope_cross_attention.py` instead:
+
+```python
+from pos_enc.rayrope_cross_attention import RayRoPE_DotProductAttention_Cross
+rayrope_cross_attn = RayRoPE_DotProductAttention_Cross(...)
+
+rayrope_cross_attn._precompute_and_cache_apply_fns(
+    w2cs,     # extrinsics of query views
+    Ks,       # intrinsics of query views
+    w2cs_kv,  # extrinsics of key/value views
+    Ks_kv,    # intrinsics of key/value views
+)
+```
+
+
+# NVS Experiment 
+## Environment Setup
 
 ```
 conda create -n rayrope python=3.11
 pip install -r requirements.txt 
 ```
 
-## Dataset
+## Dataset Setup
 
 ### CO3D
 First download the CO3Dv2 from [here](https://github.com/facebookresearch/co3d/tree/main).
@@ -72,18 +125,46 @@ To better benchmark the ability of different positional encodings to capture lar
 python scripts/objv_submitit_batch_render.py
 ```
 
-## Training LVSM
+## Training
 Both training and testing can be launched by `scripts/nvs.sh`. Before using, first set the dataset paths at the beginning of the script. 
 We support training LVSM with different multi-view positional encodings (e.g., Plucker raymap, GTA, PRoPE, RayRoPE). For example training with `RayRoPE` on CO3D is via:
 
 ```
-scripts/nvs.sh --dataset co3d --pos_enc d_pj+0_3d --depth_type predict_dsig
-
+scripts/nvs.sh --dataset co3d
 ```
 
 See `bash ./scripts/nvs.sh  -h` for helper information.
 
-## Acknowledgements
+## Pretrained Checkpoints
+The pre-trained checkpoints of LVSM with RayRoPE are available for download at [here](https://huggingface.co/Lucas7W7/RayRoPE/tree/main). For each dataset, we release two checkpoints: one smaller version used in the main experiment and one larger version explained in Appendix E of the paper.
+
+| Checkpoint path | #Layers | Model size |
+| --- | --- | --- |
+| co3d/lvsm-rayrope-co3d.pt | 6 | 47M |
+| re10k/lvsm-rayrope-re10k.pt | 6 | 47M |
+| objv/lvsm-rayrope-objv.pt | 6 | 47M |
+| co3d_L12/lvsm-rayrope-co3d-L12.pt | 12 | 150M |
+| re10k_L12/lvsm-rayrope-re10k-L12.pt | 12 | 150M |
+| objv_L12/lvsm-rayrope-objv-L12.pt | 12 | 150M |
+
+For example, to run the downloaded checkpoints on the corresponding test dataset, run:
+```
+scripts/nvs.sh --dataset co3d --test --test-ckpt /directory/to/downloaded/ckpts/co3d
+
+scripts/nvs.sh --dataset re10k --num_layers 12 --dim_feedforward 3072 \
+--test --test-ckpt /directory/to/downloaded/ckpts/re10k_L12
+```
+
+# Acknowledgements
 We build this code base on [PRoPE](https://github.com/liruilong940607/prope) and [Unimatch](https://github.com/autonomousvision/unimatch).
 
-
+# Citation
+If you find our work useful, please consider citing us:
+```
+@article{wu2026rayrope,
+  title={RayRoPE: Projective Ray Positional Encoding for Multi-view Attention},
+  author={Wu, Yu and Jeon, Minsik and Chang, Jen-Hao Rick and Tuzel, Oncel and Tulsiani, Shubham},
+  journal={arXiv preprint arXiv:2601.15275},
+  year={2026}
+}
+```
