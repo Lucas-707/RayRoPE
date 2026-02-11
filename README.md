@@ -14,6 +14,7 @@ This is the official code for the paper: RayRoPE: Projective Ray Positional Enco
 </p>
 
 ## Updates
+- [02.11.2026] Bug fix for cross-attention. Added demo notebook.
 - [02.04.2026] Released model weights for LVSM with RayRoPE
 - [02.04.2026] Updated instructions on using RayRoPE and restructured the code
 - [01.26.2026] Updated code for preparing the datasets (CO3D, RE10K, and Objaverse)
@@ -28,7 +29,7 @@ Using RayRoPE is easy: all you need are two files:
 - `pos_enc.rayrope.py`
 - `pos_enc.utils.rayrope_mha.py`
 
-Here is a step-by-step example of incorporating RayRoPE into multi-view self-attention modules:
+We provide a jupyter notebook `scripts/example_usage.ipynb` demonstrating how to incorporate RayRoPE into multi-view attention modules. Here is a step-by-step guide: 
 
 **1.** Initialize the RayRoPE encoding and the multi-head attention module we provide: 
 
@@ -51,11 +52,15 @@ rayrope_attn._precompute_and_cache_apply_fns(
 
 **3.** You don't need any specific modification to call the attention. Calling the `mha_layer` will automatically compute attention with RayRoPE applied. 
 
-**4.** For cross-attention, use the file `pos_enc.rayrope_cross_attention.py` instead:
+**4.** For cross-attention, use the file `pos_enc.rayrope_cross_attention.py` instead. Additionally, set `cross_attn=True` when initializing the MHA modules.
 
 ```python
 from pos_enc.rayrope_cross_attention import RayRoPE_DotProductAttention_Cross
+from pos_enc.utils.rayrope_mha import MultiheadAttention
+
 rayrope_cross_attn = RayRoPE_DotProductAttention_Cross(...)
+mha_layer = MultiheadAttention(..., sdpa_fn=self.rayrope_cross_attn.forward, 
+                                cross_attn=True) # Replace regular MHA with this
 
 rayrope_cross_attn._precompute_and_cache_apply_fns(
     w2cs,     # extrinsics of query views

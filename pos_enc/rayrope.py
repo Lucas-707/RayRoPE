@@ -132,6 +132,7 @@ class RayRoPE_DotProductAttention(torch.nn.Module):
         v: torch.Tensor,  # (batch, num_heads, seqlen, head_dim)
         predicted_d: Optional[torch.Tensor] = None,  # (batch, seqlen, 1 or 2)
         timing_enabled: bool = False,
+        predicted_d_kv = None, # not used
         **kwargs,
     ) -> torch.Tensor:
         

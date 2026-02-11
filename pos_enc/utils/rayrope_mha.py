@@ -58,6 +58,7 @@ class MultiheadAttention(torch.nn.Module):
         init_depth: float = 0.0,
         init_sigma: float = 3.0,
         sdpa_fn: Optional[Callable] = F.scaled_dot_product_attention,
+        cross_attn: bool = False, # set to True if used for cross-attention
     ):
         super().__init__()
         self.embed_dim = embed_dim
@@ -68,6 +69,7 @@ class MultiheadAttention(torch.nn.Module):
         self.bias = bias
         self.qk_norm = qk_norm
         self.sdpa_fn = sdpa_fn
+        self.cross_attn = cross_attn
 
         self.in_proj_weight = Parameter(torch.empty((3 * embed_dim, embed_dim)))
 
@@ -126,8 +128,11 @@ class MultiheadAttention(torch.nn.Module):
 
         if self.predict_d != 'none':
             raw_d = F.linear(query, self.d_proj_weight, self.d_proj_bias)
-            # predicted_d = torch.exp(log_d) # (B, T, 1) or (B, T, 2)
-            # print(f"predicted logd max/min: {log_d.max()}/{log_d.min()}, predicted d max/min: {predicted_d.max()}/{predicted_d.min()}")
+            if self.cross_attn:
+                # BUG_FIXED: if cross-attention, depths for k/v are different
+                raw_d_kv = F.linear(key, self.d_proj_weight, self.d_proj_bias)
+            else:
+                raw_d_kv = None
             
         q_proj_weight, k_proj_weight, v_proj_weight = self.in_proj_weight.chunk(
             3, dim=0
@@ -150,7 +155,7 @@ class MultiheadAttention(torch.nn.Module):
 
         if self.predict_d != 'none':
             o = sdpa_fn(q, k, v, dropout_p=self.dropout if self.training else 0.0,
-                        predicted_d=raw_d)
+                        predicted_d=raw_d, predicted_d_kv=raw_d_kv)
         else:
             o = sdpa_fn(q, k, v, dropout_p=self.dropout if self.training else 0.0)
         
