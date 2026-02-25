@@ -233,9 +233,11 @@ def load_frames_from_meta_info(
     random_zoom: bool = False,
     camera_pose_only: bool = False,
 ) -> Union[Dict[str, Any], np.ndarray]:
-    blender2opencv = np.array(
-        [[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]]
-    )
+    # ---- previous bug: poses are incorrectly transformed ----
+    # blender2opencv = np.array(
+    #     [[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]]
+    # )
+    # ---- Fixed now ----
 
     # Load the camera intrinsic
     K_raw = np.array(
@@ -253,7 +255,7 @@ def load_frames_from_meta_info(
         c2ws = []
         for frame_id in frame_ids:
             frame = frames[frame_id]
-            c2w = np.array(frame["transform_matrix"], dtype=np.float32) @ blender2opencv
+            c2w = np.array(frame["transform_matrix"], dtype=np.float32) #@ blender2opencv
             c2ws.append(c2w)
         return np.stack(c2ws)
 
@@ -278,7 +280,7 @@ def load_frames_from_meta_info(
         )
         image, K = resize_crop_with_subpixel_accuracy(image, K, patch_size)
 
-        c2w = np.array(frame["transform_matrix"], dtype=np.float32) @ blender2opencv
+        c2w = np.array(frame["transform_matrix"], dtype=np.float32) #@ blender2opencv
 
         images.append(image)
         Ks.append(K)
