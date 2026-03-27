@@ -91,6 +91,8 @@ while [[ $# -gt 0 ]]; do
     --test-zoom-in) TEST_ZOOM_IN="$2"; shift 2 ;;
     --test-ckpt) TEST_CKPT="$2"; shift 2 ;;
     --pdb) PDB_MODE=true; shift 1 ;;
+    --output-dir) OUTPUT_DIR_OVERRIDE="$2"; shift 2 ;;
+    --test-n) TEST_N="$2"; shift 2 ;;
     -h|--help)
       echo "Usage: $0 [options]"
       echo ""
@@ -172,6 +174,11 @@ PRINT_LOG_DIR="./logs/${MODEL_CONFIG}/${DATASET_STR}/${INPUT_DEPTH_STR}"
 [[ $BG_LOSS_W != 1.0 || $P_LOSS_W != 0.5 ]] && LOG_DIR="${LOG_DIR}/masked" && PRINT_LOG_DIR="${PRINT_LOG_DIR}/masked"
 
 LOG_DIR="${LOG_DIR}/${NAME}"
+
+# Override output dir if specified
+if [ -n "$OUTPUT_DIR_OVERRIDE" ]; then
+  LOG_DIR="$OUTPUT_DIR_OVERRIDE"
+fi
 
 mkdir -p "${LOG_DIR}"
 mkdir -p "${PRINT_LOG_DIR}"

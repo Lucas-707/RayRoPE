@@ -4,7 +4,7 @@
 </p>
 
 <h3 align="center">
-  <a href="https://rayrope.github.io/">Project Page</a> | <a href="https://arxiv.org/abs/2601.15275v1">arXiv</a>
+  <a href="https://rayrope.github.io/">Project Page</a> | <a href="https://arxiv.org/abs/2601.15275">arXiv</a>
 </h3>
 
 This is the official code for the paper: RayRoPE: Projective Ray Positional Encoding for Multi-view Attention.
