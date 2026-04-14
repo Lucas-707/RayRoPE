@@ -11,6 +11,8 @@ import numpy as np
 # from pos_enc.timing_utils import time_block
 from torch.profiler import profile, record_function, ProfilerActivity
 
+# import time
+
 MAX_DEPTH = 100.0
 MAX_LOG_DEPTH = 3.0
 # MAX_LOG_DEPTH = math.log(MAX_DEPTH)
@@ -136,6 +138,13 @@ class RayRoPE_DotProductAttention(torch.nn.Module):
         **kwargs,
     ) -> torch.Tensor:
         
+        # ========================================
+        """torch.cuda.synchronize()
+        start_mem = torch.cuda.memory_allocated()
+        torch.cuda.reset_peak_memory_stats()
+        start_time = time.perf_counter()"""
+        # ========================================
+        
         # with time_block("attention_total", timing_enabled):
             # with time_block("prepare_enc", timing_enabled):
         # positions_debug = {}
@@ -144,6 +153,23 @@ class RayRoPE_DotProductAttention(torch.nn.Module):
             # positions_collector=positions_debug,
         )
         # self.last_positions = positions_debug
+        
+        # ========================================
+        """torch.cuda.synchronize()
+        end_time = time.perf_counter()
+
+        peak_mem = torch.cuda.max_memory_allocated() 
+        end_mem = torch.cuda.memory_allocated()      
+
+        elapsed_ms = (end_time - start_time) * 1000
+        peak_mb = (peak_mem - start_mem) / (1024 ** 2)
+        delta_mb = (end_mem - start_mem) / (1024 ** 2)
+
+        print(f"\n['PyTorch' _prepare_apply_fns]")
+        print(f"Time: {elapsed_ms:.3f} ms")
+        print(f"Peak Memory: {peak_mb:.3f} MB")
+        print(f"End Memory : {delta_mb:.3f} MB\n")"""
+        # ========================================
 
         output = self.rayrope_dot_product_attention(
             q,
