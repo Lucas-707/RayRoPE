@@ -4,6 +4,10 @@
 </p>
 
 <h3 align="center">
+  ECCV 2026
+</h3>
+
+<h3 align="center">
   <a href="https://rayrope.github.io/">Project Page</a> | <a href="https://arxiv.org/abs/2601.15275">arXiv</a>
 </h3>
 
@@ -160,10 +164,10 @@ This work was supported by Apple. We thank Zihan Wang and Qitao Zhao for insight
 # Citation
 If you find our work useful, please consider citing us:
 ```
-@article{wu2026rayrope,
+@inproceedings{wu2026rayrope,
   title={RayRoPE: Projective Ray Positional Encoding for Multi-view Attention},
   author={Wu, Yu and Jeon, Minsik and Chang, Jen-Hao Rick and Tuzel, Oncel and Tulsiani, Shubham},
-  journal={arXiv preprint arXiv:2601.15275},
+  booktitle={European Conference on Computer Vision (ECCV)},
   year={2026}
 }
 ```
