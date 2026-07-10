@@ -159,7 +159,7 @@ scripts/nvs.sh --dataset re10k --num_layers 12 --dim_feedforward 3072 \
 ```
 
 # Acknowledgements
-This work was supported by Apple. We thank Zihan Wang and Qitao Zhao for insightful discussions throughout the project. Additionally, our implementation is built upon the open-source frameworks [PRoPE](https://github.com/liruilong940607/prope) and [Unimatch](https://github.com/autonomousvision/unimatch); we are grateful to the authors for making their code available.
+This work was supported by Apple. We thank Zihan Wang and Qitao Zhao for insightful discussions throughout the project. Additionally, our implementation is built upon the open-source frameworks [PRoPE](https://github.com/liruilong940607/prope) and [Unimatch](https://github.com/autonomousvision/unimatch); we are grateful to the authors for making their code available. This project was supported by Apple and NSF Award IIS2345610. This work used computation resources at NCSA Delta, NCSA Delta-AI, and Bridges-2 through allocation CIS240289, CIS251333, and CIS240132 from the Advanced Cyberinfrastructure Coordination Ecosystem: Services \& Support (ACCESS) program, which is supported by U.S. National Science Foundation grants \#2138259, \#2138286, \#2138307, \#2137603, and \#2138296. 
 
 # Citation
 If you find our work useful, please consider citing us:
