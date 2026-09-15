@@ -3,9 +3,11 @@
   <img src="./assets/visual/rayrope_title.png" height="80" />
 </p>
 
-<h3 align="center">
-  ECCV 2026
-</h3>
+<div align="center">
+
+### ECCV 2026 $\textcolor{red}{\textsf{Spotlight}}$
+
+</div>
 
 <h3 align="center">
   <a href="https://rayrope.github.io/">Project Page</a> | <a href="https://arxiv.org/abs/2601.15275">arXiv</a>
